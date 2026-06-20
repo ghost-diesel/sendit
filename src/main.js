@@ -151,6 +151,11 @@ function createWindow() {
     minHeight: 480,
     title: 'Send It',
     backgroundColor: '#0b0c10',
+    // macOS gets its icon from the .app bundle; Linux needs it set explicitly
+    // or the window/taskbar shows a broken-icon "X".
+    ...(process.platform === 'linux'
+      ? { icon: path.join(__dirname, '..', 'build', 'icon.png') }
+      : {}),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     autoHideMenuBar: true,
     webPreferences: {

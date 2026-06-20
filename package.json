@@ -27,6 +27,9 @@
       "build/icon.*",
       "build/trayTemplate*.png"
     ],
+    "asarUnpack": [
+      "build/icon.png"
+    ],
     "mac": {
       "category": "public.app-category.productivity",
       "target": [
