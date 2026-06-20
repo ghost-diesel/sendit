@@ -23,8 +23,22 @@ contextBridge.exposeInMainWorld('api', {
   setActionsEnabled: (on) => ipcRenderer.invoke('set-actions-enabled', on),
   reloadActions: () => ipcRenderer.invoke('reload-actions'),
   openActionsFile: () => ipcRenderer.invoke('open-actions-file'),
+  actionsFull: () => ipcRenderer.invoke('actions-full'),
+  actionsSave: (def) => ipcRenderer.invoke('actions-save', def),
+  actionsDelete: (id) => ipcRenderer.invoke('actions-delete', id),
   pairPeer: (peerId, code) => ipcRenderer.invoke('pair-peer', peerId, code),
   runRemote: (peerId, actionId) => ipcRenderer.invoke('run-remote', peerId, actionId),
+
+  // Diagnostics / help
+  runDiagnostics: () => ipcRenderer.invoke('run-diagnostics'),
+  appVersion: () => ipcRenderer.invoke('app-version'),
+
+  // Updates
+  updateInfo: () => ipcRenderer.invoke('update-info'),
+  checkUpdates: () => ipcRenderer.invoke('check-updates'),
+  downloadUpdate: () => ipcRenderer.invoke('download-update'),
+  installUpdate: () => ipcRenderer.invoke('install-update'),
+  onUpdateStatus: (cb) => ipcRenderer.on('update-status', (_e, s) => cb(s)),
 
   onHistory: (cb) => ipcRenderer.on('history', (_e, h) => cb(h)),
   onStatus: (cb) => ipcRenderer.on('status', (_e, s) => cb(s)),

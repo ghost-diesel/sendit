@@ -503,6 +503,11 @@ body {
   width: 8px; height: 8px; border-radius: 50%;
   background: var(--accent-2); box-shadow: 0 0 0 2px var(--bg);
 }
+.icon-btn.has-update::after {
+  content: ""; position: absolute; top: 5px; right: 5px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--good); box-shadow: 0 0 0 2px var(--bg);
+}
 
 /* ---------- Remote actions panel ---------- */
 .actions-modal { width: 460px; }
@@ -560,5 +565,79 @@ body {
   color: var(--text-dim); white-space: pre-wrap; word-break: break-word;
   user-select: text; background: rgba(0,0,0,0.25);
 }
+
+/* ---------- Help & diagnostics ---------- */
+.help-modal { width: 500px; max-height: 86vh; overflow-y: auto; }
+.help-section { margin-bottom: 18px; }
+.help-section .dim { color: var(--text-faint); }
+.help-row { display: flex; align-items: center; justify-content: space-between; }
+.help-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  font-size: 12px; font-weight: 700; letter-spacing: 0.4px; color: var(--text-dim);
+  margin-bottom: 10px;
+}
+.update-status {
+  margin-top: 10px; padding: 9px 12px; border-radius: 9px;
+  font-size: 12.5px; background: var(--panel-strong); border: 1px solid var(--border); color: var(--text-dim);
+}
+.update-status.good { color: var(--good); border-color: rgba(63,208,127,0.3); }
+.update-status.warn { color: var(--warn); border-color: rgba(240,179,64,0.3); }
+
+.diag-results { display: flex; flex-direction: column; gap: 7px; }
+.diag-item {
+  display: flex; gap: 9px; align-items: flex-start;
+  padding: 9px 11px; border-radius: 9px;
+  background: var(--panel-strong); border: 1px solid var(--border);
+}
+.diag-item .mark { flex: none; font-weight: 700; width: 16px; text-align: center; }
+.diag-item.ok .mark { color: var(--good); }
+.diag-item.bad .mark { color: var(--danger); }
+.diag-item.info .mark { color: var(--accent); }
+.diag-item .dl { font-size: 13px; font-weight: 600; color: var(--text); }
+.diag-item .dd { font-size: 11.5px; color: var(--text-faint); }
+.diag-item .dh { font-size: 11.5px; color: var(--warn); margin-top: 3px; line-height: 1.45; }
+
+.prompt-box {
+  width: 100%; min-height: 150px; resize: vertical;
+  border: 1px solid var(--border-strong); border-radius: 10px;
+  background: rgba(0,0,0,0.25); color: var(--text-dim);
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.5;
+  padding: 11px; outline: none; user-select: text;
+}
+
+/* ---------- Actions editor ---------- */
+.editor-modal { width: 520px; max-height: 86vh; overflow-y: auto; }
+.editor-list { display: flex; flex-direction: column; gap: 7px; margin: 6px 0 16px; }
+.editor-list:empty::after { content: "No actions yet — add one below."; color: var(--text-faint); font-size: 12.5px; }
+.el-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 11px; border-radius: 9px;
+  background: var(--panel-strong); border: 1px solid var(--border);
+}
+.el-item .el-main { flex: 1; min-width: 0; }
+.el-item .el-label { font-size: 13px; font-weight: 600; color: var(--text); }
+.el-item .el-label .dot { color: var(--danger); margin-left: 5px; }
+.el-item .el-cmd { font-family: var(--mono); font-size: 11px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.el-item .chip { flex: none; }
+
+.editor-form {
+  border: 1px solid var(--border-strong); border-radius: 12px;
+  padding: 14px; background: rgba(155,109,255,0.04);
+  display: flex; flex-direction: column; gap: 9px;
+}
+.ef-title { font-size: 12px; font-weight: 700; color: var(--text-dim); letter-spacing: 0.4px; }
+.ef-row { display: flex; gap: 9px; }
+.editor-form input[type="text"], .editor-form input:not([type]), .editor-form input[type="number"] {
+  flex: 1; min-width: 0; padding: 9px 11px; border-radius: 9px;
+  border: 1px solid var(--border-strong); background: var(--panel);
+  color: var(--text); font-size: 13px; outline: none; user-select: text;
+}
+.editor-form input[type="text"]:focus, .editor-form input:not([type]):focus, .editor-form input[type="number"]:focus { border-color: var(--accent); }
+.editor-form #efCommand { font-family: var(--mono); font-size: 12px; }
+.ef-flags { align-items: center; }
+.ef-flags label { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-dim); white-space: nowrap; }
+.ef-flags input[type="checkbox"] { accent-color: var(--accent-2); }
+.ef-flags #efTimeout { max-width: 130px; }
+.ef-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
 
 .hidden { display: none !important; }

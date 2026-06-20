@@ -408,6 +408,72 @@ $('actionsEnableToggle').addEventListener('change', async (e) => {
 $('openActionsFileBtn').onclick = () => window.api.openActionsFile();
 $('reloadActionsBtn').onclick = async () => { await window.api.reloadActions(); await loadActionsSelf(); toast('Reloaded actions.json'); };
 
+// ---------- Actions editor (Phase 2) ----------
+$('manageActionsBtn').onclick = async () => { await renderEditorList(); clearEditorForm(); $('editorModal').classList.remove('hidden'); };
+$('editorClose').onclick = async () => { $('editorModal').classList.add('hidden'); await loadActionsSelf(); };
+$('editorModal').addEventListener('click', (e) => { if (e.target === $('editorModal')) $('editorClose').click(); });
+
+async function renderEditorList() {
+  const list = await window.api.actionsFull();
+  const el = $('editorList');
+  el.innerHTML = '';
+  for (const a of list) {
+    const row = document.createElement('div');
+    row.className = 'el-item';
+    row.innerHTML = `<div class="el-main">
+        <div class="el-label">${escapeHtml(a.label || a.id)}${a.danger ? '<span class="dot">⚠</span>' : ''}</div>
+        <div class="el-cmd">${escapeHtml(a.command)}</div>
+      </div>`;
+    const edit = chipBtn('Edit');
+    edit.onclick = () => fillEditorForm(a);
+    const del = chipBtn('Delete', 'danger');
+    del.onclick = async () => { await window.api.actionsDelete(a.id); await renderEditorList(); };
+    row.appendChild(edit);
+    row.appendChild(del);
+    el.appendChild(row);
+  }
+}
+
+function fillEditorForm(a) {
+  $('efTitle').textContent = `Edit "${a.label || a.id}"`;
+  $('efLabel').value = a.label || '';
+  $('efId').value = a.id || '';
+  $('efCommand').value = a.command || '';
+  $('efCwd').value = a.cwd || '';
+  $('efConfirm').checked = a.confirm !== false;
+  $('efDanger').checked = !!a.danger;
+  $('efTimeout').value = a.timeout && a.timeout !== 30000 ? a.timeout : '';
+}
+
+function clearEditorForm() {
+  $('efTitle').textContent = 'Add an action';
+  for (const id of ['efLabel', 'efId', 'efCommand', 'efCwd', 'efTimeout']) $(id).value = '';
+  $('efConfirm').checked = true;
+  $('efDanger').checked = false;
+}
+$('efClear').onclick = clearEditorForm;
+
+$('efSave').onclick = async () => {
+  const id = $('efId').value.trim();
+  const command = $('efCommand').value.trim();
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/i.test(id)) { toast('id must be letters/numbers/dashes (e.g. restart-ghost)'); return; }
+  if (!command) { toast('Command is required'); return; }
+  const def = {
+    id,
+    label: $('efLabel').value.trim() || id,
+    command,
+    cwd: $('efCwd').value.trim() || undefined,
+    confirm: $('efConfirm').checked,
+    danger: $('efDanger').checked,
+    timeout: Number($('efTimeout').value) > 0 ? Number($('efTimeout').value) : undefined,
+  };
+  const ok = await window.api.actionsSave(def);
+  if (!ok) { toast('Could not save — check the id and command'); return; }
+  toast(`Saved "${def.label}"`);
+  clearEditorForm();
+  await renderEditorList();
+};
+
 // ---------- Trusted actions: remote panel ----------
 function updateActionsDot() {
   const any = peerActionsState.some((p) => p.enabled && p.list && p.list.length);
@@ -523,6 +589,121 @@ function applyPeerActions(pa) {
   if (!$('actionsModal').classList.contains('hidden')) renderActionsPanel();
 }
 
+// ---------- Help & diagnostics ----------
+let lastDiag = null;
+
+$('helpBtn').onclick = async () => {
+  $('helpModal').classList.remove('hidden');
+  $('helpVersion').textContent = 'v' + (await window.api.appVersion());
+  $('updateStatus').classList.add('hidden');
+  buildPrompt();
+};
+$('helpClose').onclick = () => $('helpModal').classList.add('hidden');
+$('helpModal').addEventListener('click', (e) => { if (e.target === $('helpModal')) $('helpModal').classList.add('hidden'); });
+
+$('runDiagBtn').onclick = async () => {
+  const el = $('diagResults');
+  el.innerHTML = '<span class="dim">Checking…</span>';
+  lastDiag = await window.api.runDiagnostics();
+  el.innerHTML = '';
+  for (const c of lastDiag.checks) {
+    const cls = c.info ? 'info' : (c.ok ? 'ok' : 'bad');
+    const mark = c.info ? 'ⓘ' : (c.ok ? '✓' : '✕');
+    const item = document.createElement('div');
+    item.className = 'diag-item ' + cls;
+    item.innerHTML = `<span class="mark">${mark}</span><div>
+      <div class="dl">${escapeHtml(c.label)}</div>
+      <div class="dd">${escapeHtml(c.detail || '')}</div>
+      ${c.hint && (!c.ok || c.info) ? `<div class="dh">${escapeHtml(c.hint)}</div>` : ''}
+    </div>`;
+    el.appendChild(item);
+  }
+  buildPrompt(); // refresh prompt with latest diagnostic data
+};
+
+function buildPrompt() {
+  const d = lastDiag;
+  const diagText = d
+    ? d.checks.map((c) => `- [${c.info ? 'info' : (c.ok ? 'OK' : 'FAIL')}] ${c.label}: ${c.detail || ''}${c.hint && !c.ok ? ` (hint: ${c.hint})` : ''}`).join('\n')
+    : '(click "Run check" first to include live diagnostics)';
+  const self = d ? d.self : { name: self0Name(), platform: '?', version: '?' };
+  const prompt = `I'm using "Send It", a small Electron app that syncs notes/files and runs trusted actions between two machines on my LAN. It is NOT cloud-based — machines talk directly over the local network.
+
+How it works:
+- Discovery: UDP broadcast on port 50777.
+- Sync + actions: WebSocket on TCP port 50778 (fixed).
+- Optional manual pairing by IP if broadcast is blocked.
+- macOS requires "Local Network" privacy permission (System Settings → Privacy & Security → Local Network) or it silently can't reach the LAN.
+- Linux may need the firewall to allow 50777/udp and 50778/tcp (e.g. ufw).
+
+My setup:
+- This machine: ${self.name} (${self.platform}), Send It ${self.version}
+- The two machines must be on the same router/subnet.
+
+Live diagnostics from the app:
+${diagText}
+
+My problem:
+<DESCRIBE WHAT'S WRONG HERE — e.g. "Mac shows Searching, never connects to my Linux box">
+
+Please help me troubleshoot step by step. Focus on: same-network checks, whether the OTHER machine's app is actually running, firewall rules (Linux ufw: 50777/udp + 50778/tcp), macOS Local Network permission, and using manual IP pairing as a fallback. Ask me for any specific check output you need.`;
+  $('promptBox').value = prompt;
+}
+
+function self0Name() { return (self && self.name) || 'this machine'; }
+
+$('copyPromptBtn').onclick = async () => {
+  await window.api.copyText($('promptBox').value);
+  toast('Prompt copied — paste it into ChatGPT/Claude');
+};
+
+// ---------- Updates (Phase 4) ----------
+let updateInfo = { available: false, canAutoInstall: false, releasesUrl: '' };
+
+function setUpdateStatus(html, cls = '') {
+  const el = $('updateStatus');
+  el.className = 'update-status ' + cls;
+  el.innerHTML = html;
+  el.classList.remove('hidden');
+}
+
+$('checkUpdateBtn').onclick = async () => {
+  if (!updateInfo.available) {
+    setUpdateStatus('Auto-update works in the installed app only. <a href="#" id="relLink">Open Releases page</a>', 'warn');
+    const l = $('relLink'); if (l) l.onclick = (e) => { e.preventDefault(); window.api.checkUpdates(); window.open(updateInfo.releasesUrl); };
+    return;
+  }
+  setUpdateStatus('Checking for updates…');
+  await window.api.checkUpdates();
+};
+
+window.api.onUpdateStatus((s) => {
+  switch (s.state) {
+    case 'current': setUpdateStatus('You’re on the latest version. ✓', 'good'); break;
+    case 'available':
+      if (s.canAutoInstall) setUpdateStatus(`Update available: <strong>v${escapeHtml(s.version)}</strong> <button class="chip good" id="dlBtn">Download &amp; install</button>`, 'good');
+      else setUpdateStatus(`Update available: <strong>v${escapeHtml(s.version)}</strong> — <button class="chip" id="dlBtn">Open download page</button>`, 'good');
+      { const b = $('dlBtn'); if (b) b.onclick = () => window.api.downloadUpdate(); }
+      markUpdateBadge(true);
+      toast(`Update available: v${s.version}`);
+      break;
+    case 'downloading': setUpdateStatus(`Downloading update… ${s.percent || 0}%`); break;
+    case 'downloaded':
+      setUpdateStatus(`Update ready. <button class="chip good" id="installBtn">Restart &amp; update</button>`, 'good');
+      { const b = $('installBtn'); if (b) b.onclick = () => window.api.installUpdate(); }
+      break;
+    case 'error': setUpdateStatus(`Update check failed: ${escapeHtml(s.message || 'unknown')}. <a href="#" id="relLink2">Open Releases page</a>`, 'warn');
+      { const l = $('relLink2'); if (l) l.onclick = (e) => { e.preventDefault(); window.open(updateInfo.releasesUrl); }; }
+      break;
+    default: break;
+  }
+});
+
+function markUpdateBadge(on) {
+  // reuse the help button as the surface for an update hint
+  $('helpBtn').classList.toggle('has-update', on);
+}
+
 // ---------- status ----------
 function applyStatus(s) {
   if (s.connected) {
@@ -561,4 +742,5 @@ window.api.onIncoming((note) => {
   editor.focus();
   peerActionsState = (await window.api.actionsPeers()) || [];
   updateActionsDot();
+  updateInfo = (await window.api.updateInfo()) || updateInfo;
 })();

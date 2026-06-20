@@ -4,13 +4,20 @@ const { app, BrowserWindow, ipcMain, dialog, clipboard, nativeImage, shell, Tray
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const net = require('net');
 const { Sync, newId } = require('./sync');
 const { Actions } = require('./actions');
+const { startCliServer } = require('./cliserver');
+const { setupUpdater } = require('./updater');
+
+const CLI_PORT = 50780; // localhost-only control API for the `send-it` CLI
 
 let win = null;
 let sync = null;
 let tray = null;
 let actions = null;
+let cliServer = null;
+let updater = null;
 
 // Keep a single running instance — relaunching just re-focuses the window.
 // This is also the safety net for Linux desktops with no system tray.
@@ -53,8 +60,16 @@ function getConfig() {
   let changed = false;
   if (!cfg.pairingToken) { cfg.pairingToken = makePairingCode(); changed = true; }
   if (!cfg.peerTokens || typeof cfg.peerTokens !== 'object') { cfg.peerTokens = {}; changed = true; }
+  if (!cfg.cliToken) { cfg.cliToken = require('crypto').randomBytes(16).toString('hex'); changed = true; }
   if (changed) saveJSON(configFile, cfg);
   return cfg;
+}
+
+// Tell the `send-it` CLI how to reach the local control API. 0600 so only this
+// user can read the token.
+function writeCliInfo(port, token, name) {
+  const file = path.join(os.homedir(), '.send-it-cli.json');
+  try { fs.writeFileSync(file, JSON.stringify({ port, token, name }), { mode: 0o600 }); } catch (_) {}
 }
 
 // Short, human-typeable pairing code (e.g. "GHOST-4F2A-9C7E").
@@ -300,6 +315,10 @@ function startSync() {
   sync.on('run-result', (r) => send('run-result', r));
 
   sync.start();
+
+  // Phase 3: local CLI control API (127.0.0.1 only).
+  cliServer = startCliServer({ port: CLI_PORT, token: cfg.cliToken, sync, onLog: (m) => send('log', m) });
+  writeCliInfo(CLI_PORT, cfg.cliToken, cfg.name);
 }
 
 function send(channel, payload) {
@@ -424,6 +443,23 @@ ipcMain.handle('reload-actions', () => {
   return actions ? { enabled: actions.enabled, count: actions.actions.size } : null;
 });
 
+// Full action defs (incl. command) for the in-app editor — local machine only.
+ipcMain.handle('actions-full', () => (actions ? [...actions.actions.values()] : []));
+
+ipcMain.handle('actions-save', (_e, def) => {
+  if (!actions) return false;
+  const ok = actions.upsert(def);
+  if (ok && sync) sync.broadcastActions();
+  return ok;
+});
+
+ipcMain.handle('actions-delete', (_e, id) => {
+  if (!actions) return false;
+  const ok = actions.remove(id);
+  if (ok && sync) sync.broadcastActions();
+  return ok;
+});
+
 ipcMain.handle('open-actions-file', () => {
   // Make sure the file exists so the editor opens something.
   if (actions && actions.actions.size === 0 && !fs.existsSync(actionsFile)) actions.persist();
@@ -446,6 +482,83 @@ ipcMain.handle('run-remote', (_e, peerId, actionId) => {
   if (!sync) return null;
   return sync.sendRun(peerId, actionId);
 });
+
+// ---- Diagnostics / Help ----
+
+function probeTcp(host, port, timeout = 3000) {
+  return new Promise((resolve) => {
+    let done = false;
+    const fin = (v) => { if (done) return; done = true; try { s.destroy(); } catch (_) {} resolve(v); };
+    const s = net.connect({ host, port, timeout });
+    s.on('connect', () => fin(true));
+    s.on('timeout', () => fin(false));
+    s.on('error', () => fin(false));
+  });
+}
+
+ipcMain.handle('run-diagnostics', async () => {
+  const cfg = getConfig();
+  const d = sync ? sync.diagnostics() : { listening: false, discoveryBound: false, connected: false, peers: [], manualPeers: [], wsPort: 50778, discoveryPort: 50777 };
+  const ips = localIPs();
+  const checks = [];
+
+  checks.push({ ok: ips.length > 0, label: 'On a local network',
+    detail: ips.length ? ips.join(', ') : 'no network interface found',
+    hint: ips.length ? '' : 'Connect this machine to Wi-Fi/Ethernet.' });
+
+  checks.push({ ok: !!d.listening, label: `Listening for connections (TCP ${d.wsPort})`,
+    detail: d.listening ? 'ok' : 'not listening',
+    hint: d.listening ? '' : 'Port may be in use by another app — quit duplicates and restart Send It.' });
+
+  checks.push({ ok: !!d.discoveryBound, label: `Discovery active (UDP ${d.discoveryPort})`,
+    detail: d.discoveryBound ? 'ok' : 'not bound',
+    hint: d.discoveryBound ? '' : 'Restart Send It; another process may hold the discovery port.' });
+
+  // Probe each manually-paired peer.
+  for (const ip of d.manualPeers) {
+    const reachable = await probeTcp(ip, d.wsPort, 3000);
+    checks.push({
+      ok: reachable,
+      label: `Reach ${ip}:${d.wsPort}`,
+      detail: reachable ? 'reachable' : 'NOT reachable',
+      hint: reachable ? '' : `Send It may not be running on ${ip}, that machine may be asleep/off, or a firewall is blocking it. On that machine: make sure Send It is open, and allow ports ${d.wsPort}/tcp + ${d.discoveryPort}/udp.`,
+    });
+  }
+
+  checks.push({ ok: !!d.connected, label: 'Connected to another machine',
+    detail: d.connected ? d.peers.join(', ') : 'no peer connected',
+    hint: d.connected ? '' : (d.manualPeers.length
+      ? 'See the reachability check above for the likely cause.'
+      : 'Open Send It on your other machine on the same network. If auto-discovery fails, add its IP under Settings → Connect by IP.') });
+
+  if (process.platform === 'darwin') {
+    checks.push({ ok: true, info: true, label: 'macOS: Local Network permission',
+      detail: 'required',
+      hint: 'If this Mac can\'t reach others, check System Settings → Privacy & Security → Local Network → Send It is ON.' });
+  }
+
+  return {
+    self: { name: cfg.name, id: cfg.id, platform: process.platform, version: app.getVersion() },
+    localIPs: ips,
+    ports: { ws: d.wsPort, discovery: d.discoveryPort },
+    connected: d.connected,
+    peers: d.peers,
+    manualPeers: d.manualPeers,
+    checks,
+  };
+});
+
+ipcMain.handle('app-version', () => app.getVersion());
+
+// ---- Updates (Phase 4) ----
+ipcMain.handle('check-updates', () => (updater ? updater.check() : { state: 'unsupported' }));
+ipcMain.handle('download-update', () => (updater ? updater.download() : false));
+ipcMain.handle('install-update', () => { if (updater) updater.install(); });
+ipcMain.handle('update-info', () => ({
+  available: !!(updater && updater.available),
+  canAutoInstall: !!(updater && updater.canAutoInstall),
+  releasesUrl: updater ? updater.releasesUrl : '',
+}));
 
 // Open the received-files folder in Finder/file manager.
 ipcMain.handle('open-received-folder', () => {
@@ -481,6 +594,10 @@ app.whenReady().then(() => {
   const cfg = getConfig();
   if (cfg.openAtLogin) setLoginItem(true);
 
+  // Updates: wire events + a quiet check shortly after launch.
+  updater = setupUpdater(send);
+  if (updater.available) setTimeout(() => updater.check(), 8000);
+
   app.on('activate', () => showWindow());
 });
 
@@ -490,4 +607,5 @@ app.on('window-all-closed', () => {});
 app.on('before-quit', () => {
   app.isQuitting = true;
   if (sync) sync.stop();
+  if (cliServer) { try { cliServer.close(); } catch (_) {} }
 });

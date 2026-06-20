@@ -44,7 +44,12 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: Send It ${{ github.ref_name }}
-          files: dist/*.AppImage
+          # latest-linux.yml + blockmap are what the in-app updater reads to
+          # detect and verify a new version — they MUST be in the release.
+          files: |
+            dist/*.AppImage
+            dist/latest-linux.yml
+            dist/*.blockmap
           body: |
             ## Send It ${{ github.ref_name }}
 

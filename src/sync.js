@@ -372,6 +372,19 @@ class Sync extends EventEmitter {
     };
   }
 
+  // Low-level health snapshot for the diagnostics panel.
+  diagnostics() {
+    return {
+      wsPort: this.wsPort,
+      discoveryPort: this.discoveryPort,
+      listening: !!(this.wss && this.wss.address()),
+      discoveryBound: !!this.disco,
+      connected: this.peers.size > 0,
+      peers: [...this.peers.values()].map((p) => p.name),
+      manualPeers: [...this.manualPeers],
+    };
+  }
+
   // Current known action lists from connected peers (for renderer init).
   peerActionsSnapshot() {
     const out = [];
