@@ -60,8 +60,25 @@ class Sync extends EventEmitter {
     this.wss.on('error', (err) => this.emit('log', 'server error: ' + err.message));
     this.wss.on('listening', () => {
       this._startDiscovery();
+      this._startHeartbeat();
       this.emit('status', this.statusSnapshot());
     });
+  }
+
+  // Ping every peer periodically; if one missed the previous ping (no pong),
+  // it's a dead half-open socket — terminate it so cleanup runs and the next
+  // beacon re-dials. This is what recovers from a peer reboot / network drop.
+  _startHeartbeat() {
+    this._hbTimer = setInterval(() => {
+      for (const { ws } of this.peers.values()) {
+        if (ws.isAlive === false) {
+          try { ws.terminate(); } catch (_) {}
+          continue;
+        }
+        ws.isAlive = false;
+        try { ws.ping(); } catch (_) {}
+      }
+    }, 15000);
   }
 
   // ---- Discovery (UDP broadcast) ----
@@ -134,7 +151,12 @@ class Sync extends EventEmitter {
       return;
     }
     ws._peerName = name;
-    const clear = () => this.dialing.delete(dialKey);
+    // Don't let a stuck TCP connect (peer mid-reboot, SYN dropped) hold the
+    // dial open — ws's default connect timeout is ~75s, which would block
+    // retries. Cap it at 5s so the next beacon can try again.
+    const connectTimer = setTimeout(() => { try { ws.terminate(); } catch (_) {} }, 5000);
+    const clear = () => { clearTimeout(connectTimer); this.dialing.delete(dialKey); };
+    ws.on('open', () => clearTimeout(connectTimer));
     ws.on('close', clear);
     ws.on('error', () => clear());
     this._wireConnection(ws, /*outbound*/ true);
@@ -144,6 +166,10 @@ class Sync extends EventEmitter {
 
   _wireConnection(ws, outbound) {
     let peerId = null;
+
+    // Heartbeat liveness: a pong marks the socket alive (see _startHeartbeat).
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
 
     const sendHello = () => {
       this._send(ws, { kind: 'hello', proto: PROTOCOL, id: this.id, name: this.name });
@@ -158,7 +184,14 @@ class Sync extends EventEmitter {
       if (msg.kind === 'hello') {
         peerId = msg.id;
         if (peerId === this.id) { ws.close(); return; }
-        if (this.peers.has(peerId)) { ws.close(); return; } // dedupe
+        // A fresh hello from a peer we already "have" means the old link is
+        // stale — the peer restarted or the network dropped without a clean
+        // close. Replace it instead of rejecting, so a reconnect always wins.
+        const existing = this.peers.get(peerId);
+        if (existing && existing.ws !== ws) {
+          try { existing.ws.terminate(); } catch (_) {}
+        }
+        ws.isAlive = true;
         this.peers.set(peerId, { ws, name: msg.name });
         this.dialing.delete(peerId);
         this._send(ws, { kind: 'history', notes: this.history });
@@ -263,6 +296,7 @@ class Sync extends EventEmitter {
 
   stop() {
     clearInterval(this._beaconTimer);
+    clearInterval(this._hbTimer);
     try { this.disco && this.disco.close(); } catch (_) {}
     try { this.wss && this.wss.close(); } catch (_) {}
     for (const { ws } of this.peers.values()) {

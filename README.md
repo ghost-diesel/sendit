@@ -94,6 +94,13 @@ it back into the menu bar; it keeps running and syncing. Use **Quit** in the men
 First: make sure both machines are on the **same network/router**, and that you're running the
 **same version** on both (re-download the latest Linux AppImage / rebuild the Mac app after updating).
 
+- **macOS "Local Network" permission (most common Mac issue).** Modern macOS blocks apps from
+  reaching the local network until you allow it — and it does so *silently* (the app looks like it's
+  running but never connects). Fix: **System Settings → Privacy & Security → Local Network → turn on
+  "Send It"**, then quit and reopen the app. If it's already on, toggle it off and back on.
+  > Note: because the Mac build is only ad-hoc signed, macOS may forget this permission after an
+  > update — just re-enable it if a new version won't connect.
+
 Discovery is a small **UDP broadcast** on port **50777**; the actual sync is a WebSocket on port
 **50778**. If a firewall blocks those, they won't find each other.
 
