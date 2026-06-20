@@ -13,6 +13,8 @@ const attachmentEl = $('attachment');
 let self = { id: '', name: '', manualPeers: [] };
 let localIPs = [];
 let history = [];
+let peerActionsState = []; // [{ peerId, name, enabled, list, paired }]
+const runStates = {}; // reqId -> { peerId, actionId, label }
 let pendingAttachment = null; // { type, name, mime, size, data }
 const MAX_BYTES = 25 * 1024 * 1024; // 25 MB
 
@@ -367,6 +369,7 @@ $('settingsBtn').onclick = () => {
   $('nameInput').value = self.name;
   $('peerInput').value = (self.manualPeers || []).join(', ');
   $('localIp').textContent = localIPs.length ? localIPs.join(', ') : 'not on a network';
+  loadActionsSelf();
   $('settingsModal').classList.remove('hidden');
   $('nameInput').focus();
 };
@@ -387,6 +390,139 @@ async function closeSettings() {
   $('settingsModal').classList.add('hidden');
 }
 
+// ---------- Trusted actions: settings controls ----------
+async function loadActionsSelf() {
+  const s = await window.api.actionsSelf();
+  $('actionsEnableToggle').checked = !!s.enabled;
+  $('pairingCode').textContent = s.pairingCode || '—';
+  $('actionsCount').textContent = s.count ? `${s.count} action${s.count === 1 ? '' : 's'}` : 'no actions yet';
+  const badge = $('actionsStateBadge');
+  badge.textContent = s.enabled ? 'on' : 'off';
+  badge.classList.toggle('on', !!s.enabled);
+}
+$('actionsEnableToggle').addEventListener('change', async (e) => {
+  await window.api.setActionsEnabled(e.target.checked);
+  await loadActionsSelf();
+  toast(e.target.checked ? 'Actions enabled on this machine' : 'Actions disabled');
+});
+$('openActionsFileBtn').onclick = () => window.api.openActionsFile();
+$('reloadActionsBtn').onclick = async () => { await window.api.reloadActions(); await loadActionsSelf(); toast('Reloaded actions.json'); };
+
+// ---------- Trusted actions: remote panel ----------
+function updateActionsDot() {
+  const any = peerActionsState.some((p) => p.enabled && p.list && p.list.length);
+  $('actionsDot').classList.toggle('hidden', !any);
+}
+
+$('actionsBtn').onclick = () => { renderActionsPanel(); $('actionsResult').classList.add('hidden'); $('actionsModal').classList.remove('hidden'); };
+$('actionsClose').onclick = () => $('actionsModal').classList.add('hidden');
+$('actionsModal').addEventListener('click', (e) => { if (e.target === $('actionsModal')) $('actionsModal').classList.add('hidden'); });
+
+function renderActionsPanel() {
+  const body = $('actionsPanelBody');
+  body.innerHTML = '';
+  const usable = peerActionsState.filter((p) => p.list && p.list.length);
+  if (!usable.length) {
+    body.innerHTML = '<div class="ap-empty">No remote actions available.<br>Connect to a machine that has <strong>Trusted actions</strong> enabled (Settings on that machine).</div>';
+    return;
+  }
+  for (const peer of usable) {
+    const sec = document.createElement('div');
+    sec.className = 'ap-peer';
+    const head = document.createElement('div');
+    head.className = 'ap-peer-head';
+    head.innerHTML = `<span class="pip"></span>Actions on ${escapeHtml(peer.name || 'peer')}`;
+    sec.appendChild(head);
+
+    if (!peer.enabled) {
+      const note = document.createElement('div');
+      note.className = 'ap-note';
+      note.textContent = 'Actions are turned off on that machine.';
+      sec.appendChild(note);
+    } else if (!peer.paired) {
+      const note = document.createElement('div');
+      note.className = 'ap-note';
+      note.textContent = `Enter ${peer.name}'s pairing code (shown in its Settings) to run these:`;
+      sec.appendChild(note);
+      const row = document.createElement('div');
+      row.className = 'ap-pair';
+      const input = document.createElement('input');
+      input.placeholder = 'XXXX-XXXX';
+      input.maxLength = 9;
+      const btn = document.createElement('button');
+      btn.className = 'chip good';
+      btn.textContent = 'Pair';
+      btn.onclick = async () => {
+        const ok = await window.api.pairPeer(peer.peerId, input.value);
+        peer.paired = ok;
+        if (ok) { toast(`Paired with ${peer.name}`); renderActionsPanel(); }
+        else toast('Enter a pairing code');
+      };
+      row.appendChild(input);
+      row.appendChild(btn);
+      sec.appendChild(row);
+    } else {
+      const wrap = document.createElement('div');
+      wrap.className = 'ap-actions';
+      for (const a of peer.list) {
+        const btn = document.createElement('button');
+        btn.className = 'ap-btn' + (a.danger ? ' danger' : '');
+        btn.innerHTML = `<span class="ico">${a.danger ? '⚠' : '▶'}</span><span>${escapeHtml(a.label || a.id)}</span><span class="run-state"></span>`;
+        btn.onclick = () => runRemoteAction(peer, a, btn);
+        wrap.appendChild(btn);
+      }
+      sec.appendChild(wrap);
+    }
+    body.appendChild(sec);
+  }
+}
+
+async function runRemoteAction(peer, action, btn) {
+  if (action.confirm) {
+    const ok = confirm(`Run "${action.label || action.id}" on ${peer.name}?`);
+    if (!ok) return;
+  }
+  const stateEl = btn.querySelector('.run-state');
+  stateEl.textContent = 'running…';
+  btn.setAttribute('disabled', '');
+  const reqId = await window.api.runRemote(peer.peerId, action.id);
+  if (reqId) runStates[reqId] = { peerId: peer.peerId, actionId: action.id, label: action.label || action.id, btn };
+  else { stateEl.textContent = 'failed'; btn.removeAttribute('disabled'); }
+}
+
+function showActionResult(r) {
+  const meta = runStates[r.reqId] || {};
+  const el = $('actionsResult');
+  el.className = 'actions-result ' + (r.ok ? 'ok' : 'err');
+  const codePart = r.code === null || r.code === undefined ? '' : ` · exit ${r.code}`;
+  const out = (r.output || r.error || '(no output)').toString();
+  el.innerHTML = `<div class="ar-head">${r.ok ? '✓' : '✕'} ${escapeHtml(meta.label || r.id)}${escapeHtml(codePart)}</div><pre></pre>`;
+  el.querySelector('pre').textContent = out;
+  el.classList.remove('hidden');
+  // reset the button
+  if (meta.btn) {
+    const stateEl = meta.btn.querySelector('.run-state');
+    if (stateEl) stateEl.textContent = r.ok ? 'done' : 'error';
+    meta.btn.removeAttribute('disabled');
+    setTimeout(() => { if (stateEl) stateEl.textContent = ''; }, 3000);
+  }
+  toast(r.ok ? `✓ ${meta.label || r.id}` : `✕ ${meta.label || r.id} failed`);
+  delete runStates[r.reqId];
+}
+
+function applyPeerActions(pa) {
+  const i = peerActionsState.findIndex((p) => p.peerId === pa.peerId);
+  if (!pa.list || !pa.list.length) {
+    if (i >= 0) peerActionsState.splice(i, 1); // peer gone / disabled
+  } else {
+    const existing = i >= 0 ? peerActionsState[i] : {};
+    const entry = { peerId: pa.peerId, name: pa.name || existing.name, enabled: pa.enabled, list: pa.list, paired: existing.paired || false };
+    if (i >= 0) peerActionsState[i] = entry; else peerActionsState.push(entry);
+  }
+  updateActionsDot();
+  if (!$('actionsModal').classList.contains('hidden')) renderActionsPanel();
+}
+
 // ---------- status ----------
 function applyStatus(s) {
   if (s.connected) {
@@ -402,6 +538,8 @@ function applyStatus(s) {
 // ---------- IPC wiring ----------
 window.api.onHistory((h) => { history = h; render(); });
 window.api.onStatus(applyStatus);
+window.api.onPeerActions(applyPeerActions);
+window.api.onRunResult(showActionResult);
 window.api.onIncoming((note) => {
   const from = (note.origin && note.origin.name) || 'your other machine';
   toast(`New from ${from}`);
@@ -421,4 +559,6 @@ window.api.onIncoming((note) => {
   applyStatus(data.status);
   render();
   editor.focus();
+  peerActionsState = (await window.api.actionsPeers()) || [];
+  updateActionsDot();
 })();

@@ -480,4 +480,85 @@ body {
 .trusted-block .modal-hint { margin: 10px 0 0; }
 .trusted-block code { font-family: var(--mono); color: var(--accent); font-size: 11.5px; }
 
+/* ---------- Trusted actions: settings controls ---------- */
+.trusted-row.enabled-row { opacity: 1; cursor: default; }
+.trusted-row.enabled-row input { cursor: pointer; }
+.soon-badge.on { color: var(--good); background: rgba(63,208,127,0.14); border-color: rgba(63,208,127,0.35); }
+
+.pairing-readout {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 12px 0 10px; padding: 9px 12px; border-radius: 10px;
+  background: var(--panel-strong); border: 1px solid var(--border);
+}
+.pairing-readout span { font-size: 12px; color: var(--text-dim); font-weight: 600; }
+.pairing-readout code { font-family: var(--mono); font-size: 14px; color: var(--accent-2); letter-spacing: 1px; user-select: text; }
+
+.actions-file-row { display: flex; align-items: center; gap: 8px; }
+.afile-count { font-size: 11.5px; color: var(--text-faint); margin-left: auto; }
+
+/* actions top-bar button dot */
+.icon-btn { position: relative; }
+.badge-dot {
+  position: absolute; top: 5px; right: 5px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent-2); box-shadow: 0 0 0 2px var(--bg);
+}
+
+/* ---------- Remote actions panel ---------- */
+.actions-modal { width: 460px; }
+#actionsPanelBody { display: flex; flex-direction: column; gap: 16px; }
+.ap-empty { color: var(--text-faint); font-size: 13px; text-align: center; padding: 18px 0; line-height: 1.5; }
+
+.ap-peer { border: 1px solid var(--border); border-radius: 12px; padding: 13px; background: var(--panel-strong); }
+.ap-peer-head {
+  display: flex; align-items: center; gap: 7px; margin-bottom: 11px;
+  font-size: 13px; font-weight: 700; color: var(--text);
+}
+.ap-peer-head .pip { width: 7px; height: 7px; border-radius: 50%; background: var(--good); }
+.ap-note { font-size: 12.5px; color: var(--text-faint); line-height: 1.5; }
+
+.ap-actions { display: flex; flex-direction: column; gap: 8px; }
+.ap-btn {
+  -webkit-app-region: no-drag;
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; text-align: left;
+  padding: 11px 13px; border-radius: 10px;
+  border: 1px solid var(--border-strong); background: var(--panel);
+  color: var(--text); font-size: 13.5px; font-weight: 600; cursor: pointer;
+  transition: all 0.14s ease;
+}
+.ap-btn:hover { border-color: var(--accent); background: rgba(109,139,255,0.08); }
+.ap-btn .ico { color: var(--accent); display: grid; place-items: center; }
+.ap-btn.danger:hover { border-color: var(--danger); background: rgba(255,109,109,0.08); }
+.ap-btn.danger .ico { color: var(--danger); }
+.ap-btn .run-state { margin-left: auto; font-size: 11px; color: var(--text-faint); font-weight: 600; }
+.ap-btn[disabled] { opacity: 0.55; cursor: default; }
+
+.ap-pair { display: flex; gap: 8px; margin-top: 4px; }
+.ap-pair input {
+  flex: 1; padding: 8px 11px; border-radius: 9px;
+  border: 1px solid var(--border-strong); background: var(--panel);
+  color: var(--text); font-family: var(--mono); font-size: 13px;
+  text-transform: uppercase; outline: none; user-select: text;
+}
+.ap-pair input:focus { border-color: var(--accent); }
+
+.actions-result {
+  margin-top: 14px; border: 1px solid var(--border); border-radius: 10px;
+  overflow: hidden;
+}
+.actions-result .ar-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; font-size: 12px; font-weight: 700;
+  background: var(--panel-strong);
+}
+.actions-result.ok .ar-head { color: var(--good); }
+.actions-result.err .ar-head { color: var(--danger); }
+.actions-result pre {
+  margin: 0; padding: 11px 12px; max-height: 220px; overflow: auto;
+  font-family: var(--mono); font-size: 12px; line-height: 1.5;
+  color: var(--text-dim); white-space: pre-wrap; word-break: break-word;
+  user-select: text; background: rgba(0,0,0,0.25);
+}
+
 .hidden { display: none !important; }

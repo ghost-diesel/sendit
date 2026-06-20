@@ -17,8 +17,19 @@ contextBridge.exposeInMainWorld('api', {
   showInFolder: (p) => ipcRenderer.invoke('show-in-folder', p),
   openFile: (p) => ipcRenderer.invoke('open-file', p),
 
+  // Trusted Actions
+  actionsSelf: () => ipcRenderer.invoke('actions-self'),
+  actionsPeers: () => ipcRenderer.invoke('actions-peers'),
+  setActionsEnabled: (on) => ipcRenderer.invoke('set-actions-enabled', on),
+  reloadActions: () => ipcRenderer.invoke('reload-actions'),
+  openActionsFile: () => ipcRenderer.invoke('open-actions-file'),
+  pairPeer: (peerId, code) => ipcRenderer.invoke('pair-peer', peerId, code),
+  runRemote: (peerId, actionId) => ipcRenderer.invoke('run-remote', peerId, actionId),
+
   onHistory: (cb) => ipcRenderer.on('history', (_e, h) => cb(h)),
   onStatus: (cb) => ipcRenderer.on('status', (_e, s) => cb(s)),
   onIncoming: (cb) => ipcRenderer.on('incoming', (_e, n) => cb(n)),
   onLog: (cb) => ipcRenderer.on('log', (_e, m) => cb(m)),
+  onPeerActions: (cb) => ipcRenderer.on('peer-actions', (_e, pa) => cb(pa)),
+  onRunResult: (cb) => ipcRenderer.on('run-result', (_e, r) => cb(r)),
 });

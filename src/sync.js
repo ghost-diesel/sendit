@@ -39,6 +39,8 @@ class Sync extends EventEmitter {
     this.peers = new Map(); // peerId -> { ws, name }
     this.dialing = new Set(); // peerId or addr keys currently being dialed
     this.history = [];
+    this.peerActions = new Map(); // peerId -> { enabled, list }
+    this.actionsProvider = null; // set by main: { publicState, run, pairingToken, peerToken }
 
     this.wss = null;
     this.disco = null;
@@ -51,6 +53,11 @@ class Sync extends EventEmitter {
 
   setManualPeers(list) {
     this.manualPeers = Array.isArray(list) ? list : [];
+  }
+
+  // Provider bridges to the local Actions registry without coupling Sync to it.
+  setActionsProvider(p) {
+    this.actionsProvider = p;
   }
 
   start() {
@@ -195,6 +202,7 @@ class Sync extends EventEmitter {
         this.peers.set(peerId, { ws, name: msg.name });
         this.dialing.delete(peerId);
         this._send(ws, { kind: 'history', notes: this.history });
+        this._sendActions(ws); // advertise our available actions (names only)
         this.emit('status', this.statusSnapshot());
         this.emit('log', `connected to ${msg.name}`);
         return;
@@ -227,17 +235,87 @@ class Sync extends EventEmitter {
         this.emit('history-changed', this.history);
         return;
       }
+
+      // ---- Trusted Actions (ids only cross the wire) ----
+
+      if (msg.kind === 'actions') {
+        // Peer told us which actions it exposes (id/label/flags, no commands).
+        this.peerActions.set(peerId, {
+          enabled: !!msg.enabled,
+          list: Array.isArray(msg.list) ? msg.list : [],
+        });
+        const name = (this.peers.get(peerId) || {}).name;
+        this.emit('peer-actions', { peerId, name, ...this.peerActions.get(peerId) });
+        return;
+      }
+
+      if (msg.kind === 'run') {
+        this._handleRun(ws, peerId, msg);
+        return;
+      }
+
+      if (msg.kind === 'run-result') {
+        this.emit('run-result', {
+          peerId, reqId: msg.reqId, id: msg.id,
+          ok: !!msg.ok, code: msg.code, output: msg.output, error: msg.error,
+        });
+        return;
+      }
     });
 
     const cleanup = () => {
       if (peerId && this.peers.get(peerId) && this.peers.get(peerId).ws === ws) {
         this.peers.delete(peerId);
+        this.peerActions.delete(peerId);
+        this.emit('peer-actions', { peerId, enabled: false, list: [] });
         this.emit('status', this.statusSnapshot());
         this.emit('log', 'peer disconnected');
       }
     };
     ws.on('close', cleanup);
     ws.on('error', cleanup);
+  }
+
+  // ---- Trusted Actions plumbing ----
+
+  _sendActions(ws) {
+    if (!this.actionsProvider) return;
+    const st = this.actionsProvider.publicState();
+    this._send(ws, { kind: 'actions', enabled: !!st.enabled, list: st.list || [] });
+  }
+
+  // Re-advertise our action list to all peers (after a toggle/edit/reload).
+  broadcastActions() {
+    for (const { ws } of this.peers.values()) this._sendActions(ws);
+  }
+
+  // A peer asked us to run an action. Validate the pairing token + allow-list,
+  // execute locally, and return the result. Only the id crossed the wire.
+  _handleRun(ws, peerId, msg) {
+    const reply = (r) => this._send(ws, {
+      kind: 'run-result', reqId: msg.reqId, id: msg.id,
+      ok: !!r.ok, code: r.code === undefined ? null : r.code, output: r.output, error: r.error,
+    });
+    const provider = this.actionsProvider;
+    if (!provider) return reply({ ok: false, error: 'actions not available on target' });
+
+    const expected = provider.pairingToken();
+    if (!expected || msg.token !== expected) {
+      return reply({ ok: false, error: 'not paired — invalid or missing pairing code' });
+    }
+    const name = (this.peers.get(peerId) || {}).name || 'peer';
+    provider.run(msg.id, { id: peerId, name }, reply);
+  }
+
+  // Ask a peer to run one of its actions. Returns a request id (or null).
+  // The result arrives later via the 'run-result' event.
+  sendRun(peerId, actionId) {
+    const peer = this.peers.get(peerId);
+    if (!peer) return null;
+    const reqId = crypto.randomUUID();
+    const token = this.actionsProvider ? this.actionsProvider.peerToken(peerId) : '';
+    this._send(peer.ws, { kind: 'run', reqId, id: actionId, token: token || '' });
+    return reqId;
   }
 
   // Merge a note into history (dedupe by id). Returns true if new.
@@ -292,6 +370,16 @@ class Sync extends EventEmitter {
       peers: [...this.peers.values()].map((p) => p.name),
       selfName: this.name,
     };
+  }
+
+  // Current known action lists from connected peers (for renderer init).
+  peerActionsSnapshot() {
+    const out = [];
+    for (const [peerId, pa] of this.peerActions) {
+      const name = (this.peers.get(peerId) || {}).name;
+      out.push({ peerId, name, enabled: pa.enabled, list: pa.list });
+    }
+    return out;
   }
 
   stop() {

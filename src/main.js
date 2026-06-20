@@ -5,10 +5,12 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { Sync, newId } = require('./sync');
+const { Actions } = require('./actions');
 
 let win = null;
 let sync = null;
 let tray = null;
+let actions = null;
 
 // Keep a single running instance — relaunching just re-focuses the window.
 // This is also the safety net for Linux desktops with no system tray.
@@ -22,6 +24,8 @@ if (!gotLock) {
 const userDir = app.getPath('userData');
 const historyFile = path.join(userDir, 'history.json');
 const configFile = path.join(userDir, 'config.json');
+const actionsFile = path.join(userDir, 'actions.json');
+const actionsLog = path.join(userDir, 'actions.log');
 
 function loadJSON(file, fallback) {
   try {
@@ -44,7 +48,19 @@ function getConfig() {
     saveJSON(configFile, cfg);
   }
   if (!Array.isArray(cfg.manualPeers)) cfg.manualPeers = [];
+  // Trusted Actions: this machine's pairing code (others must present it to run
+  // our actions) + the codes we've stored for peers we control.
+  let changed = false;
+  if (!cfg.pairingToken) { cfg.pairingToken = makePairingCode(); changed = true; }
+  if (!cfg.peerTokens || typeof cfg.peerTokens !== 'object') { cfg.peerTokens = {}; changed = true; }
+  if (changed) saveJSON(configFile, cfg);
   return cfg;
+}
+
+// Short, human-typeable pairing code (e.g. "GHOST-4F2A-9C7E").
+function makePairingCode() {
+  const hex = require('crypto').randomBytes(4).toString('hex').toUpperCase();
+  return `${hex.slice(0, 4)}-${hex.slice(4, 8)}`;
 }
 
 // This machine's LAN IPv4 address(es) — shown in settings so the user knows
@@ -254,6 +270,15 @@ function startSync() {
   sync = new Sync({ id: cfg.id, name: cfg.name, manualPeers: cfg.manualPeers });
   sync.setHistory(history);
 
+  // Trusted Actions: load this machine's registry and bridge it to Sync.
+  actions = new Actions({ file: actionsFile, logFile: actionsLog });
+  sync.setActionsProvider({
+    publicState: () => ({ enabled: actions.enabled, list: actions.publicList() }),
+    run: (id, source, cb) => actions.run(id, source, cb),
+    pairingToken: () => getConfig().pairingToken, // validate inbound run requests
+    peerToken: (peerId) => (getConfig().peerTokens || {})[peerId] || '', // sign outbound
+  });
+
   // Catch up any received files already in history (e.g. received by an older
   // version, or before this machine had the feature) so they get a local copy.
   if (processReceivedFiles(history, cfg.id)) saveJSON(historyFile, history);
@@ -266,6 +291,8 @@ function startSync() {
   sync.on('status', (s) => { send('status', s); updateTrayMenu(); });
   sync.on('incoming', (note) => send('incoming', note));
   sync.on('log', (m) => send('log', m));
+  sync.on('peer-actions', (pa) => send('peer-actions', pa));
+  sync.on('run-result', (r) => send('run-result', r));
 
   sync.start();
 }
@@ -358,6 +385,61 @@ ipcMain.handle('save-note-file', async (_e, note) => {
   } catch (_) {
     return false;
   }
+});
+
+// ---- Trusted Actions IPC ----
+
+// This machine's own action config + pairing code (for Settings).
+ipcMain.handle('actions-self', () => {
+  const cfg = getConfig();
+  return {
+    enabled: actions ? actions.enabled : false,
+    pairingCode: cfg.pairingToken,
+    count: actions ? actions.actions.size : 0,
+    file: actionsFile,
+  };
+});
+
+// Peer action lists + which peers we've paired with (have a token for).
+ipcMain.handle('actions-peers', () => {
+  const cfg = getConfig();
+  const list = sync ? sync.peerActionsSnapshot() : [];
+  return list.map((p) => ({ ...p, paired: !!(cfg.peerTokens || {})[p.peerId] }));
+});
+
+ipcMain.handle('set-actions-enabled', (_e, on) => {
+  if (actions) actions.setEnabled(!!on);
+  if (sync) sync.broadcastActions(); // tell peers our list/enabled changed
+  return actions ? actions.enabled : false;
+});
+
+ipcMain.handle('reload-actions', () => {
+  if (actions) actions.load();
+  if (sync) sync.broadcastActions();
+  return actions ? { enabled: actions.enabled, count: actions.actions.size } : null;
+});
+
+ipcMain.handle('open-actions-file', () => {
+  // Make sure the file exists so the editor opens something.
+  if (actions && actions.actions.size === 0 && !fs.existsSync(actionsFile)) actions.persist();
+  shell.openPath(actionsFile);
+  return actionsFile;
+});
+
+// Store a peer's pairing code locally so we can trigger its actions.
+ipcMain.handle('pair-peer', (_e, peerId, code) => {
+  const cfg = getConfig();
+  cfg.peerTokens = cfg.peerTokens || {};
+  const c = String(code || '').trim().toUpperCase();
+  if (c) cfg.peerTokens[peerId] = c; else delete cfg.peerTokens[peerId];
+  saveJSON(configFile, cfg);
+  return !!c;
+});
+
+// Ask a connected peer to run one of its actions.
+ipcMain.handle('run-remote', (_e, peerId, actionId) => {
+  if (!sync) return null;
+  return sync.sendRun(peerId, actionId);
 });
 
 // Open the received-files folder in Finder/file manager.
