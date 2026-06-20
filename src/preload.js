@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('api', {
   deleteNote: (id) => ipcRenderer.invoke('delete-note', id),
   clearAll: () => ipcRenderer.invoke('clear-all'),
   setName: (name) => ipcRenderer.invoke('set-name', name),
+  setManualPeers: (list) => ipcRenderer.invoke('set-manual-peers', list),
   copyText: (text) => ipcRenderer.invoke('copy-text', text),
   copyImage: (dataUrl) => ipcRenderer.invoke('copy-image', dataUrl),
   readClipboard: () => ipcRenderer.invoke('read-clipboard'),

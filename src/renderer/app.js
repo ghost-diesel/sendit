@@ -10,7 +10,8 @@ const statusText = $('statusText');
 const monoToggle = $('monoToggle');
 const attachmentEl = $('attachment');
 
-let self = { id: '', name: '' };
+let self = { id: '', name: '', manualPeers: [] };
+let localIPs = [];
 let history = [];
 let pendingAttachment = null; // { type, name, mime, size, data }
 const MAX_BYTES = 25 * 1024 * 1024; // 25 MB
@@ -305,6 +306,8 @@ $('clearBtn').onclick = () => {
 // Settings
 $('settingsBtn').onclick = () => {
   $('nameInput').value = self.name;
+  $('peerInput').value = (self.manualPeers || []).join(', ');
+  $('localIp').textContent = localIPs.length ? localIPs.join(', ') : 'not on a network';
   $('settingsModal').classList.remove('hidden');
   $('nameInput').focus();
 };
@@ -318,6 +321,10 @@ async function closeSettings() {
     self.name = await window.api.setName(newName);
     $('selfName').textContent = self.name;
   }
+  const peers = $('peerInput').value;
+  const saved = await window.api.setManualPeers(peers);
+  self.manualPeers = saved;
+  if (saved.length) toast('Saved — connecting…');
   $('settingsModal').classList.add('hidden');
 }
 
@@ -349,6 +356,7 @@ window.api.onIncoming((note) => {
 (async function init() {
   const data = await window.api.init();
   self = data.self;
+  localIPs = data.localIPs || [];
   history = data.history || [];
   $('selfName').textContent = self.name;
   applyStatus(data.status);

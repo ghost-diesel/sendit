@@ -91,6 +91,19 @@
           <input type="text" id="nameInput" placeholder="e.g. Mac Mini" />
         </label>
         <p class="modal-hint">Shown on your other machine so you know where a note came from.</p>
+
+        <div class="ip-readout">
+          <span>This machine's IP</span>
+          <code id="localIp">—</code>
+        </div>
+
+        <label class="field">
+          <span>Connect by IP <em>(optional — only if auto-connect fails)</em></span>
+          <input type="text" id="peerInput" placeholder="e.g. 192.168.68.42" spellcheck="false" />
+        </label>
+        <p class="modal-hint">Leave blank to auto-discover. If your network blocks discovery, type the
+          <strong>other</strong> machine's IP here (shown in its own settings). You only need to set it on one side.</p>
+
         <div class="modal-actions">
           <button class="btn ghost" id="settingsClose">Done</button>
         </div>

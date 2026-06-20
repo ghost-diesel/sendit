@@ -393,7 +393,21 @@ body {
   font-size: 14px; outline: none; user-select: text;
 }
 .field input:focus { border-color: var(--accent); }
-.modal-hint { font-size: 12px; color: var(--text-faint); margin: 10px 0 18px; line-height: 1.5; }
+.modal-hint { font-size: 12px; color: var(--text-faint); margin: 10px 0 16px; line-height: 1.5; }
+.modal-hint em { font-style: normal; color: var(--text-faint); opacity: 0.85; }
 .modal-actions { display: flex; justify-content: flex-end; }
+.field + .field { margin-top: 14px; }
+
+.ip-readout {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 4px 0 16px;
+  padding: 9px 12px; border-radius: 10px;
+  background: var(--panel-strong); border: 1px solid var(--border);
+}
+.ip-readout span { font-size: 12px; color: var(--text-dim); font-weight: 600; }
+.ip-readout code {
+  font-family: var(--mono); font-size: 13px; color: var(--accent);
+  user-select: text;
+}
 
 .hidden { display: none !important; }

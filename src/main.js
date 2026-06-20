@@ -40,10 +40,23 @@ function saveJSON(file, data) {
 function getConfig() {
   let cfg = loadJSON(configFile, null);
   if (!cfg || !cfg.id) {
-    cfg = { id: newId(), name: os.hostname().replace(/\.local$/, '') };
+    cfg = { id: newId(), name: os.hostname().replace(/\.local$/, ''), manualPeers: [] };
     saveJSON(configFile, cfg);
   }
+  if (!Array.isArray(cfg.manualPeers)) cfg.manualPeers = [];
   return cfg;
+}
+
+// This machine's LAN IPv4 address(es) — shown in settings so the user knows
+// what to type on the other machine if they use manual pairing.
+function localIPs() {
+  const out = [];
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const ni of list || []) {
+      if (ni.family === 'IPv4' && !ni.internal) out.push(ni.address);
+    }
+  }
+  return out;
 }
 
 function createWindow() {
@@ -170,7 +183,7 @@ function startSync() {
   const cfg = getConfig();
   const history = loadJSON(historyFile, []);
 
-  sync = new Sync({ id: cfg.id, name: cfg.name });
+  sync = new Sync({ id: cfg.id, name: cfg.name, manualPeers: cfg.manualPeers });
   sync.setHistory(history);
 
   sync.on('history-changed', (h) => {
@@ -198,7 +211,19 @@ ipcMain.handle('init', () => {
     history: sync ? sync.history : [],
     status: sync ? sync.statusSnapshot() : { connected: false, count: 0, peers: [], selfName: cfg.name },
     self: cfg,
+    localIPs: localIPs(),
   };
+});
+
+ipcMain.handle('set-manual-peers', (_e, list) => {
+  const cfg = getConfig();
+  const arr = (Array.isArray(list) ? list : String(list || '').split(','))
+    .map((s) => String(s).trim())
+    .filter(Boolean);
+  cfg.manualPeers = arr;
+  saveJSON(configFile, cfg);
+  if (sync) sync.setManualPeers(arr);
+  return arr;
 });
 
 ipcMain.handle('publish-note', (_e, note) => {

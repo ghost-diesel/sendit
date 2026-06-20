@@ -77,24 +77,36 @@ it back into the menu bar; it keeps running and syncing. Use **Quit** in the men
 
 ## If they don't connect
 
-They rely on local network discovery (mDNS/Bonjour, the same tech AirPlay and printers use).
+First: make sure both machines are on the **same network/router**, and that you're running the
+**same version** on both (re-download the latest Linux AppImage / rebuild the Mac app after updating).
 
-- Make sure both machines are on the **same network/router**.
-- **Linux firewall**: if you use `ufw`, allow mDNS and the app:
+Discovery is a small **UDP broadcast** on port **50777**; the actual sync is a WebSocket on port
+**50778**. If a firewall blocks those, they won't find each other.
+
+- **Linux firewall (`ufw`)** — this is the most common culprit. Allow the two ports:
   ```bash
-  sudo ufw allow 5353/udp
+  sudo ufw allow 50777/udp
+  sudo ufw allow 50778/tcp
   ```
-  (Send It uses an automatic high port for the actual sync; if you have a strict firewall, allow the
-  app through, or temporarily disable the firewall to confirm that's the cause.)
-- Corporate/guest networks sometimes block multicast — a normal home router does not.
+  (Or temporarily `sudo ufw disable` just to confirm the firewall is the cause.)
+
+- **Still stuck? Pair manually — bulletproof.** Open **Settings (gear)** on each machine; it shows
+  *This machine's IP*. On **one** machine, type the **other** machine's IP into **"Connect by IP"** and
+  hit Done. This skips discovery entirely and connects directly. You only need to do it on one side.
+
+- Some corporate/guest networks block broadcast between devices — a normal home router does not. On
+  those, use the manual IP option above.
 
 ---
 
 ## Under the hood
 
 - **Electron** app, identical on macOS + Linux.
-- **mDNS** (`bonjour-service`) for zero-config peer discovery on the LAN.
-- **WebSockets** (`ws`) for a direct, full-duplex, peer-to-peer sync connection.
+- **UDP broadcast beacon** (port 50777) for zero-config peer discovery — deliberately *not* mDNS, since
+  the OS mDNS daemon (mDNSResponder / avahi) owns port 5353 and swallows inbound multicast, so a
+  userland mDNS stack can't hear remote machines. A plain broadcast on our own port has no such issue.
+- **WebSockets** (`ws`, port 50778) for a direct, full-duplex, peer-to-peer sync connection.
+- Optional **manual IP pairing** for networks that filter broadcast traffic.
 - History is stored locally as JSON in the app's data folder and capped at the last 300 items.
 - No server, no telemetry, no external calls.
 

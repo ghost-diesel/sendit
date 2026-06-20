@@ -1,7 +1,7 @@
 {
   "name": "send-it",
   "productName": "Send It",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A beautiful, dead-simple notepad that syncs instantly between your machines over the local network. No cloud, no accounts, no terminal.",
   "main": "src/main.js",
   "author": "Ben",
@@ -13,7 +13,6 @@
     "dist:linux": "electron-builder --linux"
   },
   "dependencies": {
-    "bonjour-service": "^1.2.1",
     "ws": "^8.18.0"
   },
   "devDependencies": {
