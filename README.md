@@ -32,20 +32,15 @@ There is nothing to configure. Open it on both → they connect. That's it.
 3. First launch only: if macOS says it's from an unidentified developer, **right-click the app → Open → Open**.
    (After that, it's a normal click-the-icon app forever.)
 
-### Linux (one command, one time)
+### Linux — just download it (no building)
 
-Copy this whole `send it` folder to your Linux box, then run **once**:
+1. Grab the latest **`.AppImage`** from the [**Releases page**](https://github.com/ghost-diesel/sendit/releases/latest).
+2. Right-click it → **Properties → Permissions → "Allow executing as program"** (or `chmod +x` it).
+3. **Double-click** to run. No install, no terminal. Drag it to your desktop or app launcher to pin it.
 
-```bash
-cd "send it"
-./build-linux.sh
-```
-
-That produces a single **`Send It-1.0.0.AppImage`** file in `dist/`. Double-click it to run — no install,
-no terminal ever again. (You can drag it to your desktop or app launcher and pin it.)
-
-> Don't want to build? You can also just run `npm install && npm start` in the folder, but the AppImage
-> gives you the real click-an-icon experience.
+> **Build it yourself instead?** Clone the repo and run `./build-linux.sh` once — it installs deps and
+> produces the AppImage in `dist/`. Every tagged release is also built automatically by GitHub Actions
+> (see `.github/workflows/release.yml`).
 
 ---
 
