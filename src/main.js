@@ -19,6 +19,15 @@ let actions = null;
 let cliServer = null;
 let updater = null;
 
+// Recent connection-log lines, shown in Help → Diagnostics.
+const logBuffer = [];
+function pushLog(m) {
+  const line = `${new Date().toLocaleTimeString()}  ${m}`;
+  logBuffer.push(line);
+  if (logBuffer.length > 250) logBuffer.shift();
+  send('log', m);
+}
+
 // Keep a single running instance — relaunching just re-focuses the window.
 // This is also the safety net for Linux desktops with no system tray.
 const gotLock = app.requestSingleInstanceLock();
@@ -310,10 +319,11 @@ function startSync() {
   });
   sync.on('status', (s) => { send('status', s); updateTrayMenu(); });
   sync.on('incoming', (note) => send('incoming', note));
-  sync.on('log', (m) => send('log', m));
   sync.on('peer-actions', (pa) => send('peer-actions', pa));
   sync.on('run-result', (r) => send('run-result', r));
+  sync.on('log', pushLog);
 
+  pushLog(`starting — ${cfg.name} (${String(cfg.id).slice(0, 8)}) on ports ws ${50778}/disc ${50777}; manual peers: ${cfg.manualPeers.join(', ') || 'none'}`);
   sync.start();
 
   // Phase 3: local CLI control API (127.0.0.1 only).
@@ -549,6 +559,8 @@ ipcMain.handle('run-diagnostics', async () => {
 });
 
 ipcMain.handle('app-version', () => app.getVersion());
+ipcMain.handle('get-logs', () => logBuffer.slice());
+ipcMain.handle('reconnect', () => { if (sync) sync.reconnect(); return true; });
 
 // ---- Updates (Phase 4) ----
 ipcMain.handle('check-updates', () => (updater ? updater.check() : { state: 'unsupported' }));
@@ -594,9 +606,10 @@ app.whenReady().then(() => {
   const cfg = getConfig();
   if (cfg.openAtLogin) setLoginItem(true);
 
-  // Updates: wire events + a quiet check shortly after launch.
+  // Updates: wire event handlers only. We do NOT auto-check on launch — update
+  // checks happen only when the user clicks "Check for updates" in Help, so a
+  // missing release/metadata never produces noise or affects connectivity.
   updater = setupUpdater(send);
-  if (updater.available) setTimeout(() => updater.check(), 8000);
 
   app.on('activate', () => showWindow());
 });

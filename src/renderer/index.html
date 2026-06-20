@@ -179,9 +179,20 @@
         <div class="help-section">
           <div class="help-head">
             <span>Connection diagnostics</span>
-            <button class="chip" id="runDiagBtn">Run check</button>
+            <span class="help-head-btns">
+              <button class="chip" id="reconnectBtn">Force reconnect</button>
+              <button class="chip" id="runDiagBtn">Run check</button>
+            </span>
           </div>
           <div id="diagResults" class="diag-results"><span class="dim">Run a check to see what's working and what's not.</span></div>
+        </div>
+
+        <div class="help-section">
+          <div class="help-head">
+            <span>Connection log</span>
+            <button class="chip" id="refreshLogBtn">Refresh</button>
+          </div>
+          <pre id="logBox" class="log-box">Open this panel to load recent connection activity.</pre>
         </div>
 
         <div class="help-section">

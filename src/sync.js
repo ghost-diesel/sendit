@@ -128,8 +128,14 @@ class Sync extends EventEmitter {
       try { this.disco.send(msg, this.discoveryPort, addr); } catch (_) {}
     }
     // Also poke any manually-configured peers (broadcast may be filtered).
-    for (const ip of this.manualPeers) {
-      if (ip) this._dial('ip:' + ip, ip, this.wsPort, ip);
+    // Accepts "ip" or "ip:port" (defaults to our WS port).
+    for (const entry of this.manualPeers) {
+      if (!entry) continue;
+      let ip = String(entry).trim();
+      let port = this.wsPort;
+      const idx = ip.lastIndexOf(':');
+      if (idx > 0 && /^\d+$/.test(ip.slice(idx + 1))) { port = Number(ip.slice(idx + 1)); ip = ip.slice(0, idx); }
+      this._dial('ip:' + entry, ip, port, ip);
     }
   }
 
@@ -158,14 +164,19 @@ class Sync extends EventEmitter {
       return;
     }
     ws._peerName = name;
+    const where = `${host}:${port}`;
+    this.emit('log', `→ connecting to ${where}${dialKey.startsWith('ip:') ? ' (manual)' : ''}`);
     // Don't let a stuck TCP connect (peer mid-reboot, SYN dropped) hold the
     // dial open — ws's default connect timeout is ~75s, which would block
     // retries. Cap it at 5s so the next beacon can try again.
-    const connectTimer = setTimeout(() => { try { ws.terminate(); } catch (_) {} }, 5000);
+    const connectTimer = setTimeout(() => {
+      this.emit('log', `✕ connect to ${where} timed out (no response in 5s)`);
+      try { ws.terminate(); } catch (_) {}
+    }, 5000);
     const clear = () => { clearTimeout(connectTimer); this.dialing.delete(dialKey); };
-    ws.on('open', () => clearTimeout(connectTimer));
+    ws.on('open', () => { clearTimeout(connectTimer); this.emit('log', `✓ socket open to ${where} — sent hello`); });
     ws.on('close', clear);
-    ws.on('error', () => clear());
+    ws.on('error', (e) => { this.emit('log', `✕ connect to ${where} failed: ${e && (e.code || e.message) || 'error'}`); clear(); });
     this._wireConnection(ws, /*outbound*/ true);
   }
 
@@ -190,21 +201,29 @@ class Sync extends EventEmitter {
 
       if (msg.kind === 'hello') {
         peerId = msg.id;
-        if (peerId === this.id) { ws.close(); return; }
+        if (peerId === this.id) { this.emit('log', 'ignored self-connection'); ws.close(); return; }
+        this.emit('log', `← hello from ${msg.name} (${String(peerId).slice(0, 8)})`);
         // A fresh hello from a peer we already "have" means the old link is
         // stale — the peer restarted or the network dropped without a clean
         // close. Replace it instead of rejecting, so a reconnect always wins.
         const existing = this.peers.get(peerId);
         if (existing && existing.ws !== ws) {
+          this.emit('log', `replacing stale link to ${msg.name}`);
           try { existing.ws.terminate(); } catch (_) {}
         }
         ws.isAlive = true;
         this.peers.set(peerId, { ws, name: msg.name });
         this.dialing.delete(peerId);
-        this._send(ws, { kind: 'history', notes: this.history });
-        this._sendActions(ws); // advertise our available actions (names only)
+        // Surface "connected" FIRST — nothing below may hide it, and a controller
+        // connects regardless of whether IT has Trusted Actions enabled.
         this.emit('status', this.statusSnapshot());
-        this.emit('log', `connected to ${msg.name}`);
+        this.emit('log', `✓ connected to ${msg.name}`);
+        // History + action-list are best-effort; they must never abort the
+        // handshake (an error here used to leave the peer "Searching").
+        try { this._send(ws, { kind: 'history', notes: this.history }); }
+        catch (e) { this.emit('log', 'history send error: ' + (e && e.message)); }
+        try { this._sendActions(ws); }
+        catch (e) { this.emit('log', 'actions send error: ' + (e && e.message)); }
         return;
       }
 
@@ -265,22 +284,35 @@ class Sync extends EventEmitter {
 
     const cleanup = () => {
       if (peerId && this.peers.get(peerId) && this.peers.get(peerId).ws === ws) {
+        const name = this.peers.get(peerId).name;
         this.peers.delete(peerId);
         this.peerActions.delete(peerId);
         this.emit('peer-actions', { peerId, enabled: false, list: [] });
         this.emit('status', this.statusSnapshot());
-        this.emit('log', 'peer disconnected');
+        this.emit('log', `✕ disconnected from ${name || String(peerId).slice(0, 8)}`);
       }
     };
     ws.on('close', cleanup);
     ws.on('error', cleanup);
   }
 
+  // Drop all peers and immediately re-dial (the "Force reconnect" button).
+  reconnect() {
+    this.emit('log', 'forcing reconnect…');
+    for (const { ws } of this.peers.values()) { try { ws.terminate(); } catch (_) {} }
+    this.peers.clear();
+    this.peerActions.clear();
+    this.dialing.clear();
+    this.emit('status', this.statusSnapshot());
+    this._beacon();
+  }
+
   // ---- Trusted Actions plumbing ----
 
   _sendActions(ws) {
     if (!this.actionsProvider) return;
-    const st = this.actionsProvider.publicState();
+    let st;
+    try { st = this.actionsProvider.publicState(); } catch (_) { st = { enabled: false, list: [] }; }
     this._send(ws, { kind: 'actions', enabled: !!st.enabled, list: st.list || [] });
   }
 

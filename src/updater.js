@@ -27,7 +27,7 @@ function setupUpdater(send) {
 
   if (available) {
     autoUpdater.autoDownload = false;
-    autoUpdater.autoInstallOnAppQuit = canAutoInstall;
+    autoUpdater.autoInstallOnAppQuit = false; // never act unless the user asks
 
     autoUpdater.on('update-available', (info) => {
       send('update-status', { state: 'available', version: info.version, canAutoInstall });

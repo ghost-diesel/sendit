@@ -538,6 +538,12 @@ function renderActionsPanel() {
         wrap.appendChild(btn);
       }
       sec.appendChild(wrap);
+      const forget = document.createElement('button');
+      forget.className = 'text-btn';
+      forget.style.marginTop = '8px';
+      forget.textContent = 'Forget pairing';
+      forget.onclick = async () => { await window.api.pairPeer(peer.peerId, ''); peer.paired = false; toast(`Forgot pairing for ${peer.name}`); renderActionsPanel(); };
+      sec.appendChild(forget);
     }
     body.appendChild(sec);
   }
@@ -597,7 +603,26 @@ $('helpBtn').onclick = async () => {
   $('helpVersion').textContent = 'v' + (await window.api.appVersion());
   $('updateStatus').classList.add('hidden');
   buildPrompt();
+  loadLogs();
 };
+
+async function loadLogs() {
+  const lines = (await window.api.getLogs()) || [];
+  const box = $('logBox');
+  box.textContent = lines.length ? lines.join('\n') : 'No activity yet.';
+  box.scrollTop = box.scrollHeight;
+}
+$('refreshLogBtn').onclick = loadLogs;
+$('reconnectBtn').onclick = async () => { await window.api.reconnect(); toast('Reconnecting…'); setTimeout(loadLogs, 600); };
+
+// Live-append log lines while Help is open.
+window.api.onLog((m) => {
+  if ($('helpModal').classList.contains('hidden')) return;
+  const box = $('logBox');
+  const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 10;
+  box.textContent += (box.textContent && box.textContent !== 'No activity yet.' ? '\n' : '') + new Date().toLocaleTimeString() + '  ' + m;
+  if (atBottom) box.scrollTop = box.scrollHeight;
+});
 $('helpClose').onclick = () => $('helpModal').classList.add('hidden');
 $('helpModal').addEventListener('click', (e) => { if (e.target === $('helpModal')) $('helpModal').classList.add('hidden'); });
 

@@ -32,6 +32,8 @@ contextBridge.exposeInMainWorld('api', {
   // Diagnostics / help
   runDiagnostics: () => ipcRenderer.invoke('run-diagnostics'),
   appVersion: () => ipcRenderer.invoke('app-version'),
+  getLogs: () => ipcRenderer.invoke('get-logs'),
+  reconnect: () => ipcRenderer.invoke('reconnect'),
 
   // Updates
   updateInfo: () => ipcRenderer.invoke('update-info'),
