@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('api', {
   appVersion: () => ipcRenderer.invoke('app-version'),
   getLogs: () => ipcRenderer.invoke('get-logs'),
   reconnect: () => ipcRenderer.invoke('reconnect'),
+  openLocalNetworkSettings: () => ipcRenderer.invoke('open-local-network-settings'),
 
   // Updates
   updateInfo: () => ipcRenderer.invoke('update-info'),

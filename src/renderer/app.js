@@ -615,6 +615,13 @@ async function loadLogs() {
 $('refreshLogBtn').onclick = loadLogs;
 $('reconnectBtn').onclick = async () => { await window.api.reconnect(); toast('Reconnecting…'); setTimeout(loadLogs, 600); };
 
+// On macOS, surface the one-click Local Network settings shortcut (the #1 fix).
+if (navigator.platform.startsWith('Mac')) {
+  const b = $('localNetBtn');
+  b.classList.remove('hidden');
+  b.onclick = () => window.api.openLocalNetworkSettings();
+}
+
 // Live-append log lines while Help is open.
 window.api.onLog((m) => {
   if ($('helpModal').classList.contains('hidden')) return;

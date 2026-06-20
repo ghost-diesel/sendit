@@ -19,12 +19,14 @@ let actions = null;
 let cliServer = null;
 let updater = null;
 
-// Recent connection-log lines, shown in Help → Diagnostics.
+// Recent connection-log lines, shown in Help → Diagnostics + appended to
+// connection.log in the app's data dir for after-the-fact debugging.
 const logBuffer = [];
 function pushLog(m) {
-  const line = `${new Date().toLocaleTimeString()}  ${m}`;
+  const line = `${new Date().toISOString()}  ${m}`;
   logBuffer.push(line);
   if (logBuffer.length > 250) logBuffer.shift();
+  try { fs.appendFileSync(path.join(userDir, 'connection.log'), line + '\n'); } catch (_) {}
   send('log', m);
 }
 
@@ -527,11 +529,14 @@ ipcMain.handle('run-diagnostics', async () => {
   // Probe each manually-paired peer.
   for (const ip of d.manualPeers) {
     const reachable = await probeTcp(ip, d.wsPort, 3000);
+    const macHint = process.platform === 'darwin'
+      ? ' If a terminal can reach it (nc succeeds) but this check fails, macOS is blocking Local Network access — enable Send It under System Settings → Privacy & Security → Local Network.'
+      : '';
     checks.push({
       ok: reachable,
       label: `Reach ${ip}:${d.wsPort}`,
       detail: reachable ? 'reachable' : 'NOT reachable',
-      hint: reachable ? '' : `Send It may not be running on ${ip}, that machine may be asleep/off, or a firewall is blocking it. On that machine: make sure Send It is open, and allow ports ${d.wsPort}/tcp + ${d.discoveryPort}/udp.`,
+      hint: reachable ? '' : `Send It may not be running on ${ip}, that machine may be asleep/off, or a firewall is blocking it (allow ${d.wsPort}/tcp + ${d.discoveryPort}/udp).${macHint}`,
     });
   }
 
@@ -561,6 +566,12 @@ ipcMain.handle('run-diagnostics', async () => {
 ipcMain.handle('app-version', () => app.getVersion());
 ipcMain.handle('get-logs', () => logBuffer.slice());
 ipcMain.handle('reconnect', () => { if (sync) sync.reconnect(); return true; });
+ipcMain.handle('open-local-network-settings', () => {
+  if (process.platform === 'darwin') {
+    shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork');
+  }
+  return process.platform === 'darwin';
+});
 
 // ---- Updates (Phase 4) ----
 ipcMain.handle('check-updates', () => (updater ? updater.check() : { state: 'unsupported' }));

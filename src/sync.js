@@ -176,7 +176,15 @@ class Sync extends EventEmitter {
     const clear = () => { clearTimeout(connectTimer); this.dialing.delete(dialKey); };
     ws.on('open', () => { clearTimeout(connectTimer); this.emit('log', `✓ socket open to ${where} — sent hello`); });
     ws.on('close', clear);
-    ws.on('error', (e) => { this.emit('log', `✕ connect to ${where} failed: ${e && (e.code || e.message) || 'error'}`); clear(); });
+    ws.on('error', (e) => {
+      const code = (e && (e.code || e.message)) || 'error';
+      let extra = '';
+      if ((code === 'EHOSTUNREACH' || code === 'ENETUNREACH') && process.platform === 'darwin') {
+        extra = ' — macOS is blocking Local Network access for this app. Enable it: System Settings → Privacy & Security → Local Network → Send It.';
+      }
+      this.emit('log', `✕ connect to ${where} failed: ${code}${extra}`);
+      clear();
+    });
     this._wireConnection(ws, /*outbound*/ true);
   }
 
@@ -184,10 +192,23 @@ class Sync extends EventEmitter {
 
   _wireConnection(ws, outbound) {
     let peerId = null;
+    let helloDone = false;
 
     // Heartbeat liveness: a pong marks the socket alive (see _startHeartbeat).
     ws.isAlive = true;
     ws.on('pong', () => { ws.isAlive = true; });
+
+    // If the hello handshake never completes (peer half-open, version/proto
+    // weirdness, or a socket that opens but never replies), tear it down so the
+    // dial slot frees and the next beacon retries — instead of wedging forever
+    // on a TCP-alive but never-handshaked socket. THIS is the fix for "TCP
+    // reachable but stuck on Searching".
+    const helloTimer = setTimeout(() => {
+      if (!helloDone) {
+        this.emit('log', '✕ handshake timed out (no hello) — closing, will retry');
+        try { ws.terminate(); } catch (_) {}
+      }
+    }, 8000);
 
     const sendHello = () => {
       this._send(ws, { kind: 'hello', proto: PROTOCOL, id: this.id, name: this.name });
@@ -201,7 +222,9 @@ class Sync extends EventEmitter {
 
       if (msg.kind === 'hello') {
         peerId = msg.id;
-        if (peerId === this.id) { this.emit('log', 'ignored self-connection'); ws.close(); return; }
+        if (peerId === this.id) { this.emit('log', 'ignored self-connection'); clearTimeout(helloTimer); ws.close(); return; }
+        helloDone = true;
+        clearTimeout(helloTimer);
         this.emit('log', `← hello from ${msg.name} (${String(peerId).slice(0, 8)})`);
         // A fresh hello from a peer we already "have" means the old link is
         // stale — the peer restarted or the network dropped without a clean
@@ -283,6 +306,7 @@ class Sync extends EventEmitter {
     });
 
     const cleanup = () => {
+      clearTimeout(helloTimer);
       if (peerId && this.peers.get(peerId) && this.peers.get(peerId).ws === ws) {
         const name = this.peers.get(peerId).name;
         this.peers.delete(peerId);
