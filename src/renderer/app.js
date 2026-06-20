@@ -97,9 +97,15 @@ function buildCard(note) {
   const body = document.createElement('div');
   if (note.type === 'image') {
     body.className = 'card-body';
+    const wrap = document.createElement('div');
+    wrap.className = 'card-img';
+    wrap.title = 'Click to preview';
     const img = document.createElement('img');
     img.src = note.data;
-    body.appendChild(img);
+    img.loading = 'lazy';
+    wrap.appendChild(img);
+    wrap.onclick = () => openLightbox(note);
+    body.appendChild(wrap);
   } else if (note.type === 'file') {
     body.className = 'card-body';
     body.innerHTML = `
@@ -124,12 +130,22 @@ function buildCard(note) {
   } else if (note.type === 'image') {
     const copy = chipBtn('Copy image');
     copy.onclick = async () => { await window.api.copyImage(note.data); toast('Image copied'); };
-    const save = chipBtn('Save…');
-    save.onclick = () => saveNote(note);
     actions.appendChild(copy);
+    if (note.localPath) actions.appendChild(showInFolderChip(note));
+    const save = chipBtn('Save as…');
+    save.onclick = () => saveNote(note);
     actions.appendChild(save);
   } else {
-    const save = chipBtn('Save…');
+    if (note.localPath) {
+      const open = chipBtn('Open', 'good');
+      open.onclick = async () => {
+        const ok = await window.api.openFile(note.localPath);
+        if (!ok) toast('File not found on disk');
+      };
+      actions.appendChild(open);
+      actions.appendChild(showInFolderChip(note));
+    }
+    const save = chipBtn('Save as…');
     save.onclick = () => saveNote(note);
     actions.appendChild(save);
   }
@@ -149,10 +165,53 @@ function chipBtn(label, cls = '') {
   return b;
 }
 
+function showInFolderChip(note) {
+  const chip = chipBtn('Show in folder');
+  chip.onclick = async () => {
+    const ok = await window.api.showInFolder(note.localPath);
+    if (!ok) toast('File not found on disk');
+  };
+  return chip;
+}
+
 async function saveNote(note) {
   const path = await window.api.saveNoteFile(note);
   if (path) toast('Saved');
 }
+
+// ---------- lightbox ----------
+function openLightbox(note) {
+  const lb = $('lightbox');
+  $('lightboxImg').src = note.data;
+  const bar = $('lightboxBar');
+  bar.innerHTML = '';
+  const copy = chipBtn('Copy image');
+  copy.onclick = async (e) => { e.stopPropagation(); await window.api.copyImage(note.data); toast('Image copied'); };
+  bar.appendChild(copy);
+  if (note.localPath) {
+    const show = chipBtn('Show in folder');
+    show.onclick = async (e) => { e.stopPropagation(); const ok = await window.api.showInFolder(note.localPath); if (!ok) toast('File not found on disk'); };
+    bar.appendChild(show);
+  }
+  lb.classList.remove('hidden');
+}
+
+function closeLightbox() {
+  $('lightbox').classList.add('hidden');
+  $('lightboxImg').src = '';
+}
+
+// Close on backdrop click (but not when clicking the image or the action bar).
+$('lightbox').addEventListener('click', (e) => {
+  if (e.target === $('lightbox')) closeLightbox();
+});
+$('lightboxClose').onclick = closeLightbox;
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('lightbox').classList.contains('hidden')) closeLightbox();
+});
+
+// Open the received-files folder.
+$('openFolderBtn').onclick = () => window.api.openReceivedFolder();
 
 // refresh relative timestamps
 setInterval(() => {

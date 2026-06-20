@@ -13,6 +13,9 @@ contextBridge.exposeInMainWorld('api', {
   copyImage: (dataUrl) => ipcRenderer.invoke('copy-image', dataUrl),
   readClipboard: () => ipcRenderer.invoke('read-clipboard'),
   saveNoteFile: (note) => ipcRenderer.invoke('save-note-file', note),
+  openReceivedFolder: () => ipcRenderer.invoke('open-received-folder'),
+  showInFolder: (p) => ipcRenderer.invoke('show-in-folder', p),
+  openFile: (p) => ipcRenderer.invoke('open-file', p),
 
   onHistory: (cb) => ipcRenderer.on('history', (_e, h) => cb(h)),
   onStatus: (cb) => ipcRenderer.on('status', (_e, s) => cb(s)),

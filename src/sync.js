@@ -211,6 +211,9 @@ class Sync extends EventEmitter {
   _absorb(note) {
     if (!note || !note.id) return false;
     if (this.history.some((n) => n.id === note.id)) return false;
+    // localPath is a machine-local field (where WE saved a received file).
+    // Never trust one that arrived over the wire from a peer.
+    if (note.localPath) delete note.localPath;
     this.history.unshift(note);
     this._trim();
     return true;

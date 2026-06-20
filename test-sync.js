@@ -2,8 +2,9 @@
 // process (different WS ports, shared broadcast discovery port).
 const { Sync, newId } = require('./src/sync');
 
-const a = new Sync({ id: 'aaaa-' + newId(), name: 'machine-A', wsPort: 50778, discoveryPort: 50777 });
-const b = new Sync({ id: 'bbbb-' + newId(), name: 'machine-B', wsPort: 50779, discoveryPort: 50777 });
+// Use non-default ports so the test never collides with a real running app.
+const a = new Sync({ id: 'aaaa-' + newId(), name: 'machine-A', wsPort: 51788, discoveryPort: 51787 });
+const b = new Sync({ id: 'bbbb-' + newId(), name: 'machine-B', wsPort: 51789, discoveryPort: 51787 });
 
 let aConnected = false, bConnected = false, bGotNote = false;
 

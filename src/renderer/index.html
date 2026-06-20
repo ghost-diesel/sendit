@@ -67,7 +67,10 @@
       <section class="history">
         <div class="history-head">
           <span class="label">History</span>
-          <button class="text-btn" id="clearBtn">Clear all</button>
+          <div class="history-actions">
+            <button class="text-btn folder" id="openFolderBtn" title="Open the folder where received files are saved">Received folder</button>
+            <button class="text-btn" id="clearBtn">Clear all</button>
+          </div>
         </div>
         <div class="feed" id="feed">
           <div class="empty" id="emptyState">
@@ -81,6 +84,13 @@
 
     <!-- Toast -->
     <div class="toast" id="toast"></div>
+
+    <!-- Image lightbox -->
+    <div class="lightbox hidden" id="lightbox">
+      <button class="lightbox-close" id="lightboxClose" title="Close (Esc)">✕</button>
+      <img id="lightboxImg" alt="preview" />
+      <div class="lightbox-bar" id="lightboxBar"></div>
+    </div>
 
     <!-- Settings panel -->
     <div class="modal-backdrop hidden" id="settingsModal">
@@ -103,6 +113,20 @@
         </label>
         <p class="modal-hint">Leave blank to auto-discover. If your network blocks discovery, type the
           <strong>other</strong> machine's IP here (shown in its own settings). You only need to set it on one side.</p>
+
+        <!-- Groundwork only: see docs/TRUSTED_ACTIONS.md. Intentionally disabled. -->
+        <div class="trusted-block">
+          <div class="trusted-head">
+            <span>Trusted actions</span>
+            <span class="soon-badge">coming soon</span>
+          </div>
+          <label class="trusted-row">
+            <input type="checkbox" id="trustedToggle" disabled />
+            <span>Allow a paired machine to trigger fixed, allow-listed actions (e.g. restart Homebase)</span>
+          </label>
+          <p class="modal-hint">Disabled and opt-in by design. Never arbitrary shell commands — only a fixed,
+            confirmed, logged set of scripts. Design notes in <code>docs/TRUSTED_ACTIONS.md</code>.</p>
+        </div>
 
         <div class="modal-actions">
           <button class="btn ghost" id="settingsClose">Done</button>

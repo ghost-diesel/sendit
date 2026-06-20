@@ -20,6 +20,7 @@ There is nothing to configure. Open it on both → they connect. That's it.
 - ⚡ **Instant** — send on one, it's on the other before you can switch the KVM.
 - 🧠 **History** — everything you send stays in a synced list you can copy from with one click.
 - 🖼️ **Anything** — plain text, code (monospace, no autocorrect mangling), pasted images, dragged files.
+- 🔍 **Click to preview** — received images open full-size in an in-app lightbox; received files auto-save to `~/Downloads/Send It/`.
 
 ---
 
@@ -72,6 +73,19 @@ it back into the menu bar; it keeps running and syncing. Use **Quit** in the men
 - **Code mode** checkbox forces monospace; otherwise it auto-detects code and renders it nicely.
 - **Drag a file** anywhere onto the window to send it (up to 25 MB).
 - Click the **gear** to rename a machine (e.g. "Mac Mini" / "Linux Box") so you know where notes came from.
+
+**Images & received files**
+- **Click any image** in history to open a full-size preview (lightbox). Press **Esc**, click the **✕**,
+  or click outside the image to close. PNG, JPG, WebP, and GIF are supported.
+- Anything you **receive** from the other machine is automatically saved to a predictable folder:
+  **`~/Downloads/Send It/`** (same on Mac and Linux). Filenames get a counter if they'd collide.
+- The **Received folder** button (top of History) opens that folder. Received images/files also have
+  **Open** and **Show in folder** actions on their card.
+
+**Trusted actions (coming soon — disabled)**
+- Settings shows a disabled placeholder for a future feature: letting a paired machine trigger a small,
+  fixed set of safe actions (e.g. "restart Homebase"). It is **off by design** and will **never** run
+  arbitrary shell commands. Design notes: [`docs/TRUSTED_ACTIONS.md`](docs/TRUSTED_ACTIONS.md).
 
 ---
 

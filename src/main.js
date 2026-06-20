@@ -59,6 +59,74 @@ function localIPs() {
   return out;
 }
 
+// ---- Received files folder ----
+// Everything received from a peer is auto-saved to a predictable local folder
+// (~/Downloads/Send It) so images/files are easy to find. All local, no cloud.
+
+function receivedDir() {
+  const dir = path.join(app.getPath('downloads'), 'Send It');
+  try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
+  return dir;
+}
+
+function extFromMime(mime) {
+  switch (mime) {
+    case 'image/png': return 'png';
+    case 'image/jpeg': return 'jpg';
+    case 'image/webp': return 'webp';
+    case 'image/gif': return 'gif';
+    default: return 'png';
+  }
+}
+
+// Pick a non-colliding path in dir for the given filename (adds " (n)").
+function uniquePath(dir, name) {
+  const ext = path.extname(name);
+  const base = path.basename(name, ext) || 'file';
+  let candidate = path.join(dir, name);
+  let i = 1;
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(dir, `${base} (${i})${ext}`);
+    i++;
+  }
+  return candidate;
+}
+
+// Write a received image/file note's bytes to the received folder.
+// Returns the absolute path, or null on failure.
+function saveReceived(note) {
+  try {
+    const dir = receivedDir();
+    let name = note.name;
+    if (!name) {
+      const stamp = new Date(note.createdAt || Date.now())
+        .toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const ext = note.type === 'image' ? extFromMime(note.mime) : 'bin';
+      name = `${note.type === 'image' ? 'image' : 'file'}-${stamp}.${ext}`;
+    }
+    const target = uniquePath(dir, name);
+    const b64 = (note.data || '').split(',').pop();
+    fs.writeFileSync(target, Buffer.from(b64, 'base64'));
+    return target;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Auto-save any received (not-ours) image/file notes that aren't on disk yet.
+// Mutates notes in place to record their local path. Returns true if anything
+// changed (so the caller can re-persist + refresh the UI).
+function processReceivedFiles(history, selfId) {
+  let changed = false;
+  for (const note of history) {
+    if ((note.type !== 'image' && note.type !== 'file') || !note.data || note.localPath) continue;
+    if (note.origin && note.origin.id === selfId) continue; // skip our own
+    const p = saveReceived(note);
+    if (p) { note.localPath = p; changed = true; }
+  }
+  return changed;
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 960,
@@ -186,7 +254,12 @@ function startSync() {
   sync = new Sync({ id: cfg.id, name: cfg.name, manualPeers: cfg.manualPeers });
   sync.setHistory(history);
 
+  // Catch up any received files already in history (e.g. received by an older
+  // version, or before this machine had the feature) so they get a local copy.
+  if (processReceivedFiles(history, cfg.id)) saveJSON(historyFile, history);
+
   sync.on('history-changed', (h) => {
+    processReceivedFiles(h, cfg.id); // auto-save received images/files locally
     saveJSON(historyFile, h);
     send('history', h);
   });
@@ -285,6 +358,28 @@ ipcMain.handle('save-note-file', async (_e, note) => {
   } catch (_) {
     return false;
   }
+});
+
+// Open the received-files folder in Finder/file manager.
+ipcMain.handle('open-received-folder', () => {
+  const dir = receivedDir();
+  shell.openPath(dir);
+  return dir;
+});
+
+// Reveal a received file in Finder/file manager.
+ipcMain.handle('show-in-folder', (_e, p) => {
+  if (p && fs.existsSync(p)) { shell.showItemInFolder(p); return true; }
+  return false;
+});
+
+// Open a received file with the OS default app.
+ipcMain.handle('open-file', async (_e, p) => {
+  if (p && fs.existsSync(p)) {
+    const err = await shell.openPath(p); // '' on success
+    return err === '';
+  }
+  return false;
 });
 
 app.whenReady().then(() => {
