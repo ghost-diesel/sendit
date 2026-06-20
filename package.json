@@ -49,6 +49,9 @@
         "zip"
       ],
       "icon": "build/icon.icns",
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
       "extendInfo": {
         "NSLocalNetworkUsageDescription": "Send It connects directly to your other machine on your local network to sync notes and files. Nothing is sent to the internet."
       }

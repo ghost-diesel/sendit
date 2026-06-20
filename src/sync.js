@@ -37,6 +37,7 @@ class Sync extends EventEmitter {
     this.manualPeers = Array.isArray(manualPeers) ? manualPeers : [];
 
     this.peers = new Map(); // peerId -> { ws, name }
+    this.peerHosts = new Map(); // peerId -> remote host (to suppress redundant manual dials)
     this.dialing = new Set(); // peerId or addr keys currently being dialed
     this.history = [];
     this.peerActions = new Map(); // peerId -> { enabled, list }
@@ -63,7 +64,10 @@ class Sync extends EventEmitter {
   start() {
     // WebSocket server on a fixed port.
     this.wss = new WebSocketServer({ port: this.wsPort, host: '0.0.0.0' });
-    this.wss.on('connection', (ws) => this._wireConnection(ws, /*outbound*/ false));
+    this.wss.on('connection', (ws, req) => {
+      const ip = normalizeIp((req && req.socket && req.socket.remoteAddress) || (ws._socket && ws._socket.remoteAddress));
+      this._wireConnection(ws, /*outbound*/ false, ip);
+    });
     this.wss.on('error', (err) => this.emit('log', 'server error: ' + err.message));
     this.wss.on('listening', () => {
       this._startDiscovery();
@@ -128,13 +132,17 @@ class Sync extends EventEmitter {
       try { this.disco.send(msg, this.discoveryPort, addr); } catch (_) {}
     }
     // Also poke any manually-configured peers (broadcast may be filtered).
-    // Accepts "ip" or "ip:port" (defaults to our WS port).
+    // Accepts "ip" or "ip:port" (defaults to our WS port). Skip any host we're
+    // already connected to — otherwise we'd re-dial every beacon and churn the
+    // live connection (replace-on-hello would keep swapping it out).
+    const connectedHosts = new Set([...this.peerHosts.values()]);
     for (const entry of this.manualPeers) {
       if (!entry) continue;
       let ip = String(entry).trim();
       let port = this.wsPort;
       const idx = ip.lastIndexOf(':');
       if (idx > 0 && /^\d+$/.test(ip.slice(idx + 1))) { port = Number(ip.slice(idx + 1)); ip = ip.slice(0, idx); }
+      if (connectedHosts.has(ip)) continue;
       this._dial('ip:' + entry, ip, port, ip);
     }
   }
@@ -185,12 +193,12 @@ class Sync extends EventEmitter {
       this.emit('log', `✕ connect to ${where} failed: ${code}${extra}`);
       clear();
     });
-    this._wireConnection(ws, /*outbound*/ true);
+    this._wireConnection(ws, /*outbound*/ true, host);
   }
 
   // ---- Connection wiring (shared by inbound + outbound) ----
 
-  _wireConnection(ws, outbound) {
+  _wireConnection(ws, outbound, remoteHost) {
     let peerId = null;
     let helloDone = false;
 
@@ -236,6 +244,7 @@ class Sync extends EventEmitter {
         }
         ws.isAlive = true;
         this.peers.set(peerId, { ws, name: msg.name });
+        if (remoteHost) this.peerHosts.set(peerId, remoteHost);
         this.dialing.delete(peerId);
         // Surface "connected" FIRST — nothing below may hide it, and a controller
         // connects regardless of whether IT has Trusted Actions enabled.
@@ -310,6 +319,7 @@ class Sync extends EventEmitter {
       if (peerId && this.peers.get(peerId) && this.peers.get(peerId).ws === ws) {
         const name = this.peers.get(peerId).name;
         this.peers.delete(peerId);
+        this.peerHosts.delete(peerId);
         this.peerActions.delete(peerId);
         this.emit('peer-actions', { peerId, enabled: false, list: [] });
         this.emit('status', this.statusSnapshot());
@@ -325,6 +335,7 @@ class Sync extends EventEmitter {
     this.emit('log', 'forcing reconnect…');
     for (const { ws } of this.peers.values()) { try { ws.terminate(); } catch (_) {} }
     this.peers.clear();
+    this.peerHosts.clear();
     this.peerActions.clear();
     this.dialing.clear();
     this.emit('status', this.statusSnapshot());
@@ -465,6 +476,11 @@ class Sync extends EventEmitter {
 
 // Compute the directed broadcast address for an interface, e.g.
 // 192.168.68.60 / 255.255.255.0 -> 192.168.68.255
+// IPv4-mapped IPv6 (::ffff:192.168.0.5) -> 192.168.0.5 so it matches manual entries.
+function normalizeIp(ip) {
+  return ip ? String(ip).replace(/^::ffff:/, '') : ip;
+}
+
 function directedBroadcast(ip, mask) {
   const ipp = ip.split('.').map(Number);
   const mp = mask.split('.').map(Number);
