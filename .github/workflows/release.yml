@@ -25,7 +25,9 @@ jobs:
         run: npm ci
 
       - name: Build Linux AppImage (x64)
-        run: npx electron-builder --linux AppImage --x64
+        # --publish never: electron-builder otherwise auto-publishes on a tag and
+        # demands a token; we let the Release step below handle uploads instead.
+        run: npx electron-builder --linux AppImage --x64 --publish never
         env:
           CSC_IDENTITY_AUTODISCOVERY: "false"
 
