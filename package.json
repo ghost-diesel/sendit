@@ -49,7 +49,7 @@
         "zip"
       ],
       "icon": "build/icon.icns",
-      "identity": null,
+      "identity": "Apple Development: Ben Merrill (2J3G4DS628)",
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "extendInfo": {
