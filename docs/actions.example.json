@@ -1,0 +1,37 @@
+{
+  "//": "Example Trusted Actions config. On each machine this lives at the app's",
+  "//enabled": "Set enabled:true ONLY on a machine you want to be able to run commands.",
+  "//safety": "These commands run LOCALLY on this machine. Peers can only trigger them by id — they never see or send the command text.",
+
+  "enabled": false,
+
+  "actions": [
+    {
+      "id": "restart-ghost",
+      "label": "Restart Ghost",
+      "command": "systemctl --user restart ghost",
+      "confirm": true,
+      "danger": true
+    },
+    {
+      "id": "ghost-status",
+      "label": "Ghost Status",
+      "command": "systemctl --user status ghost --no-pager",
+      "confirm": false
+    },
+    {
+      "id": "ghost-logs",
+      "label": "Tail Ghost Logs",
+      "command": "journalctl --user -u ghost -n 40 --no-pager",
+      "confirm": false
+    },
+    {
+      "id": "restart-server",
+      "label": "Restart Homebase",
+      "command": "echo 'replace with your real restart command'",
+      "confirm": true,
+      "danger": true,
+      "timeout": 60000
+    }
+  ]
+}
