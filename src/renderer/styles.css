@@ -40,6 +40,19 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:fo
   border-color: var(--accent) !important;
 }
 
+/* Minimal, modern scrollbars everywhere (thin thumb, no track) */
+* { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.16) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.14);
+  border-radius: 999px;
+  border: 3px solid transparent;   /* padding so the visible thumb is slim */
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.26); background-clip: padding-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+
 html, body {
   margin: 0;
   height: 100%;
@@ -294,8 +307,7 @@ body {
   padding-right: 4px;
   margin: 0 -4px 0 0;
 }
-.feed::-webkit-scrollbar { width: 8px; }
-.feed::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 8px; }
+/* feed uses the global minimal scrollbar */
 
 .empty {
   margin: auto; text-align: center; color: var(--text-faint);
