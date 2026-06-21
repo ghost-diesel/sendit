@@ -101,48 +101,83 @@
 
     <!-- Settings panel -->
     <div class="modal-backdrop hidden" id="settingsModal">
-      <div class="modal">
+      <div class="modal settings-modal">
         <h2>Settings</h2>
-        <label class="field">
-          <span>This machine's name</span>
-          <input type="text" id="nameInput" placeholder="e.g. Mac Mini" />
-        </label>
-        <p class="modal-hint">Shown on your other machine so you know where a note came from.</p>
-
-        <div class="ip-readout">
-          <span>This machine's IP</span>
-          <code id="localIp">—</code>
+        <div class="tabs" role="tablist">
+          <button class="tab active" data-tab="device" role="tab">Device</button>
+          <button class="tab" data-tab="connection" role="tab">Connection</button>
+          <button class="tab" data-tab="trusted" role="tab">Trusted Actions</button>
+          <button class="tab" data-tab="updates" role="tab">Updates</button>
         </div>
 
-        <label class="field">
-          <span>Connect by IP <em>(optional — only if auto-connect fails)</em></span>
-          <input type="text" id="peerInput" placeholder="e.g. 192.168.68.42" spellcheck="false" />
-        </label>
-        <p class="modal-hint">Leave blank to auto-discover. If your network blocks discovery, type the
-          <strong>other</strong> machine's IP here (shown in its own settings). You only need to set it on one side.</p>
+        <div class="tab-body">
+          <!-- Device -->
+          <section class="tab-pane active" data-pane="device">
+            <label class="field">
+              <span>This machine's name</span>
+              <input type="text" id="nameInput" placeholder="e.g. Mac Mini" />
+            </label>
+            <p class="modal-hint">Shown on your other machine so you know where a note came from.</p>
+          </section>
 
-        <!-- Trusted actions: see docs/TRUSTED_ACTIONS.md -->
-        <div class="trusted-block">
-          <div class="trusted-head">
-            <span>Trusted actions</span>
-            <span class="soon-badge" id="actionsStateBadge">off</span>
-          </div>
-          <label class="trusted-row enabled-row">
-            <input type="checkbox" id="actionsEnableToggle" />
-            <span>Let a <strong>paired</strong> machine run this machine's <code>actions.json</code> commands by name</span>
-          </label>
-          <div class="pairing-readout">
-            <span>This machine's pairing code</span>
-            <code id="pairingCode">—</code>
-          </div>
-          <div class="actions-file-row">
-            <button class="chip good" id="manageActionsBtn">Manage actions</button>
-            <button class="chip" id="openActionsFileBtn">Edit file</button>
-            <button class="chip" id="reloadActionsBtn">Reload</button>
-            <span class="afile-count" id="actionsCount"></span>
-          </div>
-          <p class="modal-hint">Commands run locally and never leave this machine — a paired machine can only
-            trigger them by name, never send a command. Off by default. See <code>docs/TRUSTED_ACTIONS.md</code>.</p>
+          <!-- Connection -->
+          <section class="tab-pane" data-pane="connection">
+            <div class="readout">
+              <span class="readout-label">This machine's IP</span>
+              <code id="localIp">—</code>
+            </div>
+            <label class="field">
+              <span>Connect by IP <em>(optional — only if auto-connect fails)</em></span>
+              <input type="text" id="peerInput" placeholder="e.g. 192.168.68.42" spellcheck="false" />
+            </label>
+            <p class="modal-hint">Leave blank to auto-discover. If your network blocks discovery, type the
+              <strong>other</strong> machine's IP here. You only need to set it on one side.</p>
+          </section>
+
+          <!-- Trusted Actions -->
+          <section class="tab-pane" data-pane="trusted">
+            <div class="ta-bar">
+              <div class="ta-bar-text">
+                <span class="ta-bar-title">Trusted Actions</span>
+                <span class="status-tag" id="actionsStateBadge">Off</span>
+              </div>
+              <label class="switch" title="Allow paired machines to run this machine's commands">
+                <input type="checkbox" id="actionsEnableToggle" />
+                <span class="switch-track"><span class="switch-knob"></span></span>
+              </label>
+            </div>
+            <p class="modal-hint">Let a <strong>paired</strong> machine run this machine's saved commands by name.
+              Commands live only here and never cross the network. Off by default.</p>
+
+            <div class="readout">
+              <span class="readout-label">This machine's pairing code</span>
+              <code id="pairingCode" class="code-accent">—</code>
+            </div>
+
+            <div class="ta-manage">
+              <span class="afile-count" id="actionsCount">no actions yet</span>
+              <div class="ta-manage-btns">
+                <button class="chip primary-chip" id="manageActionsBtn">Manage actions</button>
+                <button class="chip" id="openActionsFileBtn">Edit file</button>
+                <button class="chip" id="reloadActionsBtn">Reload</button>
+              </div>
+            </div>
+            <p class="modal-hint">Design notes: <code>docs/TRUSTED_ACTIONS.md</code></p>
+          </section>
+
+          <!-- Updates -->
+          <section class="tab-pane" data-pane="updates">
+            <div class="readout">
+              <span class="readout-label">Version</span>
+              <code id="updVersion">—</code>
+            </div>
+            <div class="upd-row">
+              <p class="modal-hint" style="margin:0">Published to GitHub Releases. Pre-release dev builds may not
+                have a published update yet — that's expected, not an error.</p>
+              <button class="chip" id="checkUpdateBtn">Check for updates</button>
+            </div>
+            <div class="update-status hidden" id="updateStatus"></div>
+          </section>
         </div>
 
         <div class="modal-actions">
@@ -166,19 +201,14 @@
     <!-- Help & diagnostics panel -->
     <div class="modal-backdrop hidden" id="helpModal">
       <div class="modal help-modal">
-        <h2>Help &amp; diagnostics</h2>
-
-        <div class="help-section">
-          <div class="help-row">
-            <div><strong>Version</strong> <span id="helpVersion" class="dim">—</span></div>
-            <button class="chip" id="checkUpdateBtn">Check for updates</button>
-          </div>
-          <div class="update-status hidden" id="updateStatus"></div>
+        <div class="help-top">
+          <h2>Help &amp; diagnostics</h2>
+          <span class="help-ver">Send It <span id="helpVersion">—</span></span>
         </div>
 
-        <div class="help-section">
+        <section class="help-section">
           <div class="help-head">
-            <span>Connection diagnostics</span>
+            <span class="help-head-title">Connection</span>
             <span class="help-head-btns">
               <button class="chip hidden" id="localNetBtn">Local Network settings</button>
               <button class="chip" id="reconnectBtn">Force reconnect</button>
@@ -186,25 +216,25 @@
             </span>
           </div>
           <div id="diagResults" class="diag-results"><span class="dim">Run a check to see what's working and what's not.</span></div>
-        </div>
+        </section>
 
-        <div class="help-section">
+        <section class="help-section">
           <div class="help-head">
-            <span>Connection log</span>
+            <span class="help-head-title">Connection log</span>
             <button class="chip" id="refreshLogBtn">Refresh</button>
           </div>
           <pre id="logBox" class="log-box">Open this panel to load recent connection activity.</pre>
-        </div>
+        </section>
 
-        <div class="help-section">
+        <section class="help-section">
           <div class="help-head">
-            <span>Stuck? Copy a troubleshooting prompt for ChatGPT/Claude</span>
-            <button class="chip good" id="copyPromptBtn">Copy prompt</button>
+            <span class="help-head-title">Troubleshooting prompt</span>
+            <button class="chip primary-chip" id="copyPromptBtn">Copy prompt</button>
           </div>
-          <p class="modal-hint">Paste this into ChatGPT/Claude along with what's going wrong. It already includes
-            your live diagnostic info (no secrets — names/IPs only).</p>
+          <p class="modal-hint">Paste into ChatGPT/Claude with what's going wrong — it includes your live
+            diagnostics (names/IPs only, no secrets).</p>
           <textarea id="promptBox" class="prompt-box" readonly></textarea>
-        </div>
+        </section>
 
         <div class="modal-actions">
           <button class="btn ghost" id="helpClose">Done</button>

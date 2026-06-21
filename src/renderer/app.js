@@ -365,14 +365,24 @@ $('clearBtn').onclick = () => {
 };
 
 // Settings
-$('settingsBtn').onclick = () => {
+$('settingsBtn').onclick = async () => {
   $('nameInput').value = self.name;
   $('peerInput').value = (self.manualPeers || []).join(', ');
   $('localIp').textContent = localIPs.length ? localIPs.join(', ') : 'not on a network';
+  $('updVersion').textContent = 'v' + (await window.api.appVersion());
+  $('updateStatus').classList.add('hidden');
   loadActionsSelf();
+  selectTab('device');
   $('settingsModal').classList.remove('hidden');
   $('nameInput').focus();
 };
+
+// Settings tabs
+function selectTab(name) {
+  document.querySelectorAll('#settingsModal .tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('#settingsModal .tab-pane').forEach((p) => p.classList.toggle('active', p.dataset.pane === name));
+}
+document.querySelectorAll('#settingsModal .tab').forEach((t) => { t.onclick = () => selectTab(t.dataset.tab); });
 $('settingsClose').onclick = closeSettings;
 $('settingsModal').addEventListener('click', (e) => {
   if (e.target === $('settingsModal')) closeSettings();
@@ -397,7 +407,7 @@ async function loadActionsSelf() {
   $('pairingCode').textContent = s.pairingCode || '—';
   $('actionsCount').textContent = s.count ? `${s.count} action${s.count === 1 ? '' : 's'}` : 'no actions yet';
   const badge = $('actionsStateBadge');
-  badge.textContent = s.enabled ? 'on' : 'off';
+  badge.textContent = s.enabled ? 'On' : 'Off';
   badge.classList.toggle('on', !!s.enabled);
 }
 $('actionsEnableToggle').addEventListener('change', async (e) => {
@@ -484,46 +494,58 @@ $('actionsBtn').onclick = () => { renderActionsPanel(); $('actionsResult').class
 $('actionsClose').onclick = () => $('actionsModal').classList.add('hidden');
 $('actionsModal').addEventListener('click', (e) => { if (e.target === $('actionsModal')) $('actionsModal').classList.add('hidden'); });
 
+function apNote(text) {
+  const n = document.createElement('div');
+  n.className = 'ap-note';
+  n.textContent = text;
+  return n;
+}
+
 function renderActionsPanel() {
   const body = $('actionsPanelBody');
   body.innerHTML = '';
   const usable = peerActionsState.filter((p) => p.list && p.list.length);
   if (!usable.length) {
-    body.innerHTML = '<div class="ap-empty">No remote actions available.<br>Connect to a machine that has <strong>Trusted actions</strong> enabled (Settings on that machine).</div>';
+    body.innerHTML = `<div class="ap-empty">
+      <div class="ap-empty-icon">⚡</div>
+      <p>No remote actions yet</p>
+      <span>Turn on <strong>Trusted Actions</strong> on your other machine (its Settings) and its actions show up here to run.</span>
+    </div>`;
     return;
   }
   for (const peer of usable) {
+    const count = peer.list.length;
     const sec = document.createElement('div');
     sec.className = 'ap-peer';
+
     const head = document.createElement('div');
     head.className = 'ap-peer-head';
-    head.innerHTML = `<span class="pip"></span>Actions on ${escapeHtml(peer.name || 'peer')}`;
+    head.innerHTML = `
+      <span class="ap-peer-name"><span class="pip"></span>${escapeHtml(peer.name || 'peer')}</span>
+      <span class="ap-peer-meta">${peer.paired ? `${count} action${count === 1 ? '' : 's'} · <span class="ok">paired</span>` : 'not paired'}</span>`;
     sec.appendChild(head);
 
     if (!peer.enabled) {
-      const note = document.createElement('div');
-      note.className = 'ap-note';
-      note.textContent = 'Actions are turned off on that machine.';
-      sec.appendChild(note);
+      sec.appendChild(apNote('Trusted Actions are turned off on that machine.'));
     } else if (!peer.paired) {
-      const note = document.createElement('div');
-      note.className = 'ap-note';
-      note.textContent = `Enter ${peer.name}'s pairing code (shown in its Settings) to run these:`;
-      sec.appendChild(note);
+      sec.appendChild(apNote(`Enter ${peer.name}'s pairing code (shown in its Settings → Trusted Actions) to enable these ${count} action${count === 1 ? '' : 's'}.`));
       const row = document.createElement('div');
       row.className = 'ap-pair';
       const input = document.createElement('input');
       input.placeholder = 'XXXX-XXXX';
       input.maxLength = 9;
+      input.spellcheck = false;
       const btn = document.createElement('button');
-      btn.className = 'chip good';
+      btn.className = 'chip primary-chip';
       btn.textContent = 'Pair';
-      btn.onclick = async () => {
+      const doPair = async () => {
         const ok = await window.api.pairPeer(peer.peerId, input.value);
         peer.paired = ok;
         if (ok) { toast(`Paired with ${peer.name}`); renderActionsPanel(); }
         else toast('Enter a pairing code');
       };
+      btn.onclick = doPair;
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') doPair(); });
       row.appendChild(input);
       row.appendChild(btn);
       sec.appendChild(row);
@@ -533,14 +555,13 @@ function renderActionsPanel() {
       for (const a of peer.list) {
         const btn = document.createElement('button');
         btn.className = 'ap-btn' + (a.danger ? ' danger' : '');
-        btn.innerHTML = `<span class="ico">${a.danger ? '⚠' : '▶'}</span><span>${escapeHtml(a.label || a.id)}</span><span class="run-state"></span>`;
+        btn.innerHTML = `<span class="ico">${a.danger ? '⚠' : '▶'}</span><span class="ap-btn-label">${escapeHtml(a.label || a.id)}</span><span class="run-state"></span>`;
         btn.onclick = () => runRemoteAction(peer, a, btn);
         wrap.appendChild(btn);
       }
       sec.appendChild(wrap);
       const forget = document.createElement('button');
-      forget.className = 'text-btn';
-      forget.style.marginTop = '8px';
+      forget.className = 'text-btn ap-forget';
       forget.textContent = 'Forget pairing';
       forget.onclick = async () => { await window.api.pairPeer(peer.peerId, ''); peer.paired = false; toast(`Forgot pairing for ${peer.name}`); renderActionsPanel(); };
       sec.appendChild(forget);
@@ -601,10 +622,12 @@ let lastDiag = null;
 $('helpBtn').onclick = async () => {
   $('helpModal').classList.remove('hidden');
   $('helpVersion').textContent = 'v' + (await window.api.appVersion());
-  $('updateStatus').classList.add('hidden');
   buildPrompt();
   loadLogs();
 };
+
+// Clicking the connection status opens diagnostics — easy to find when stuck.
+statusPill.addEventListener('click', () => $('helpBtn').click());
 
 async function loadLogs() {
   const lines = (await window.api.getLogs()) || [];
@@ -721,19 +744,29 @@ window.api.onUpdateStatus((s) => {
       break;
     case 'downloading': setUpdateStatus(`Downloading update… ${s.percent || 0}%`); break;
     case 'downloaded':
-      setUpdateStatus(`Update ready. <button class="chip good" id="installBtn">Restart &amp; update</button>`, 'good');
+      setUpdateStatus(`Update ready. <button class="chip primary-chip" id="installBtn">Restart &amp; update</button>`, 'good');
       { const b = $('installBtn'); if (b) b.onclick = () => window.api.installUpdate(); }
       break;
-    case 'error': setUpdateStatus(`Update check failed: ${escapeHtml(s.message || 'unknown')}. <a href="#" id="relLink2">Open Releases page</a>`, 'warn');
+    case 'error': {
+      // Missing release metadata (common on a dev/pre-release build) is expected,
+      // not a failure — phrase it calmly in amber, never a scary red block.
+      const msg = String(s.message || '');
+      const noRelease = /404|not found|no published|latest-(mac|linux|win).*\.yml|ENOTFOUND|cannot find|no such|HttpError: 404/i.test(msg);
+      if (noRelease) {
+        setUpdateStatus('No published update found yet — you\'re on the latest build. <a href="#" id="relLink2">View Releases</a>', 'warn');
+      } else {
+        setUpdateStatus(`Couldn't check right now. <a href="#" id="relLink2">View Releases</a>`, 'warn');
+      }
       { const l = $('relLink2'); if (l) l.onclick = (e) => { e.preventDefault(); window.open(updateInfo.releasesUrl); }; }
       break;
+    }
     default: break;
   }
 });
 
 function markUpdateBadge(on) {
-  // reuse the help button as the surface for an update hint
-  $('helpBtn').classList.toggle('has-update', on);
+  // Updates live in Settings, so surface the hint dot on the Settings button.
+  $('settingsBtn').classList.toggle('has-update', on);
 }
 
 // ---------- status ----------
