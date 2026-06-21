@@ -430,7 +430,7 @@ body {
   background: var(--bg-2);
   border: 1px solid var(--border-strong);
   border-radius: 16px;
-  padding: 22px;
+  padding: 24px;
   box-shadow: 0 30px 80px rgba(0,0,0,0.6);
   animation: modalIn 0.17s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
@@ -450,7 +450,7 @@ body {
 .field input:focus { border-color: var(--accent); }
 .modal-hint { font-size: 12px; color: var(--text-faint); margin: 10px 0 16px; line-height: 1.5; }
 .modal-hint em { font-style: normal; color: var(--text-faint); opacity: 0.85; }
-.modal-actions { display: flex; justify-content: flex-end; }
+.modal-actions { display: flex; justify-content: flex-end; margin-top: 22px; }
 .field + .field { margin-top: 14px; }
 
 .ip-readout {

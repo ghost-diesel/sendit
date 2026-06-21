@@ -193,6 +193,25 @@ function createWindow() {
 
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
+  // Right-click context menu: Copy on any selected text (e.g. grabbing a line
+  // out of history), full Cut/Copy/Paste/Select All in editable fields.
+  win.webContents.on('context-menu', (_e, params) => {
+    const { isEditable, selectionText, editFlags } = params;
+    const tpl = [];
+    if (isEditable) {
+      tpl.push(
+        { role: 'cut', enabled: editFlags.canCut },
+        { role: 'copy', enabled: editFlags.canCopy },
+        { role: 'paste', enabled: editFlags.canPaste },
+        { type: 'separator' },
+        { role: 'selectAll' },
+      );
+    } else if (selectionText && selectionText.trim()) {
+      tpl.push({ role: 'copy' }, { type: 'separator' }, { role: 'selectAll' });
+    }
+    if (tpl.length) Menu.buildFromTemplate(tpl).popup({ window: win });
+  });
+
   // Closing the window hides it to the tray instead of quitting.
   win.on('close', (e) => {
     if (!app.isQuitting) {
