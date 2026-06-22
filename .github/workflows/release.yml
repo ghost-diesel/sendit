@@ -36,12 +36,13 @@ jobs:
 
       # Fail loudly if the Remote Terminal's native module didn't make it into the
       # package — a green build that silently dropped node-pty would ship a broken
-      # terminal. Checks the unpacked .node + the executable spawn-helper.
+      # terminal. On Linux node-pty needs only the compiled pty.node (it uses
+      # forkpty directly; the separate spawn-helper binary is a macOS-only target
+      # in node-pty's binding.gyp).
       - name: Verify node-pty bundled
         run: |
           U="dist/linux-unpacked/resources/app.asar.unpacked/node_modules/node-pty/build/Release"
-          test -f "$U/pty.node" || { echo "::error::node-pty pty.node missing from package"; exit 1; }
-          test -x "$U/spawn-helper" || { echo "::error::node-pty spawn-helper missing or not executable"; exit 1; }
+          test -s "$U/pty.node" || { echo "::error::node-pty pty.node missing from package"; exit 1; }
           echo "✓ node-pty bundled and unpacked: $(ls -1 "$U")"
 
       # Always keep the build downloadable from the run (handy for manual runs).

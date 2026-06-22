@@ -72,8 +72,11 @@ Linux**, so on CloudCore/CI it compiles from source (needs a C/C++ toolchain + `
 `build-linux.sh` checks for these).
 
 - **Packaging:** `electron-builder` automatically rebuilds `node-pty` for Electron's ABI
-  and, via `asarUnpack` (`node_modules/node-pty/**`), unpacks the `.node` + `spawn-helper`
-  outside the asar with the exec bit intact. The CI workflow asserts this happened.
+  and, via `asarUnpack` (`node_modules/node-pty/**`), unpacks the native binary outside the
+  asar. Linux needs only `pty.node` (it uses `forkpty` directly); the separate
+  `spawn-helper` binary is a **macOS-only** target in node-pty's `binding.gyp` (and there it
+  must keep its exec bit — a fresh npm extraction can strip it, but from-source/rebuild
+  restores it). The CI workflow asserts `pty.node` made it into the Linux package.
 - **Local dev (`npm start`):** run `npm run rebuild` once to rebuild `node-pty` against the
   installed Electron's ABI (uses `@electron/rebuild`). Without it, the lazy load in
   `terminal.js` fails *soft* — the feature is reported unavailable, the app still runs.
