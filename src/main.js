@@ -34,7 +34,9 @@ function pushLog(m) {
 
 // Keep a single running instance — relaunching just re-focuses the window.
 // This is also the safety net for Linux desktops with no system tray.
-const gotLock = app.requestSingleInstanceLock();
+// SENDIT_ALLOW_MULTI=1 is a dev-only escape hatch (run a test build alongside
+// an installed copy); it has no effect in normal use.
+const gotLock = process.env.SENDIT_ALLOW_MULTI === '1' || app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {

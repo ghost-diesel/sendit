@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline';" />
   <title>Send It</title>
+  <link rel="stylesheet" href="vendor/xterm.css" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -31,6 +32,10 @@
         <button class="icon-btn" id="actionsBtn" title="Remote actions">
           <svg viewBox="0 0 24 24" width="18" height="18"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
           <span class="badge-dot hidden" id="actionsDot"></span>
+        </button>
+        <button class="icon-btn" id="terminalBtn" title="Remote terminal">
+          <svg viewBox="0 0 24 24" width="18" height="18"><rect x="3" y="4.5" width="18" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7 9.5l3 3-3 3M12.5 15.5H17" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="badge-dot hidden" id="terminalDot"></span>
         </button>
         <button class="icon-btn" id="helpBtn" title="Help & diagnostics">
           <svg viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M9.2 9.3a2.8 2.8 0 0 1 5.4 1c0 1.8-2.6 2.3-2.6 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="12" cy="17.4" r="0.4" fill="currentColor" stroke="currentColor" stroke-width="0.8"/></svg>
@@ -107,6 +112,7 @@
           <button class="tab active" data-tab="device" role="tab">Device</button>
           <button class="tab" data-tab="connection" role="tab">Connection</button>
           <button class="tab" data-tab="trusted" role="tab">Trusted Actions</button>
+          <button class="tab" data-tab="terminal" role="tab">Terminal</button>
           <button class="tab" data-tab="updates" role="tab">Updates</button>
         </div>
 
@@ -163,6 +169,32 @@
               </div>
             </div>
             <p class="modal-hint">Design notes: <code>docs/TRUSTED_ACTIONS.md</code></p>
+          </section>
+
+          <!-- Remote Terminal -->
+          <section class="tab-pane" data-pane="terminal">
+            <div class="ta-bar">
+              <div class="ta-bar-text">
+                <span class="ta-bar-title">Remote Terminal</span>
+                <span class="status-tag" id="terminalStateBadge">Off</span>
+              </div>
+              <label class="switch" title="Allow paired machines to open a live shell on this machine">
+                <input type="checkbox" id="terminalEnableToggle" />
+                <span class="switch-track"><span class="switch-knob"></span></span>
+              </label>
+            </div>
+            <p class="modal-hint">Let a <strong>paired</strong> machine open a real interactive shell on
+              <strong>this</strong> machine — for tailing logs and controlling it remotely. Runs as you, with
+              no admin rights. Uses the same pairing code as Trusted Actions but is a <strong>separate</strong>
+              switch. Off by default.</p>
+
+            <div class="readout">
+              <span class="readout-label">This machine's pairing code</span>
+              <code id="terminalPairingCode" class="code-accent">—</code>
+            </div>
+
+            <p class="modal-hint warn hidden" id="terminalUnavail"></p>
+            <p class="modal-hint">Design notes: <code>docs/TERMINAL.md</code></p>
           </section>
 
           <!-- Updates -->
@@ -275,8 +307,28 @@
         </div>
       </div>
     </div>
+
+    <!-- Remote terminal -->
+    <div class="modal-backdrop hidden" id="terminalModal">
+      <div class="modal terminal-modal">
+        <div class="term-top">
+          <div class="term-top-text">
+            <h2>Remote terminal</h2>
+            <span class="term-peer" id="terminalPeerName">—</span>
+          </div>
+          <span class="term-state" id="terminalConnState">idle</span>
+        </div>
+        <div class="term-host" id="terminalHost"></div>
+        <div class="modal-actions term-actions">
+          <span class="term-hint" id="terminalHint">A live shell on your other machine. Pairing code required.</span>
+          <button class="btn ghost" id="terminalClose">Done</button>
+        </div>
+      </div>
+    </div>
   </div>
 
+  <script src="vendor/xterm.js"></script>
+  <script src="vendor/addon-fit.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

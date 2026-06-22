@@ -372,6 +372,7 @@ $('settingsBtn').onclick = async () => {
   $('updVersion').textContent = 'v' + (await window.api.appVersion());
   $('updateStatus').classList.add('hidden');
   loadActionsSelf();
+  loadTerminalSelf();
   selectTab('device');
   $('settingsModal').classList.remove('hidden');
   $('nameInput').focus();
@@ -616,6 +617,176 @@ function applyPeerActions(pa) {
   if (!$('actionsModal').classList.contains('hidden')) renderActionsPanel();
 }
 
+// ---------- Remote Terminal ----------
+// peerTerminalState: which connected peers expose a shell (+ paired flag).
+let peerTerminalState = []; // [{ peerId, name, enabled, paired }]
+// termCtx: the single live terminal session (null when the panel is closed).
+let termCtx = null; // { peerId, reqId, sid, term, fit, ro, opened }
+
+function updateTerminalDot() {
+  const any = peerTerminalState.some((p) => p.enabled);
+  $('terminalDot').classList.toggle('hidden', !any);
+}
+
+function applyPeerTerminal(pt) {
+  const i = peerTerminalState.findIndex((p) => p.peerId === pt.peerId);
+  if (!pt.enabled) {
+    if (i >= 0) peerTerminalState.splice(i, 1);
+    // If the machine we're actively shelled into just went away, say so.
+    if (termCtx && termCtx.peerId === pt.peerId && termCtx.opened) endTermSession('— peer disconnected —');
+  } else {
+    const existing = i >= 0 ? peerTerminalState[i] : {};
+    // The paired flag comes from the actions snapshot (shared pairing store).
+    const paired = (peerActionsState.find((p) => p.peerId === pt.peerId) || {}).paired || existing.paired || false;
+    const entry = { peerId: pt.peerId, name: pt.name || existing.name, enabled: true, paired };
+    if (i >= 0) peerTerminalState[i] = entry; else peerTerminalState.push(entry);
+  }
+  updateTerminalDot();
+}
+
+// ---- Settings: this machine's terminal switch ----
+async function loadTerminalSelf() {
+  const s = await window.api.terminalSelf();
+  $('terminalEnableToggle').checked = !!s.enabled;
+  $('terminalPairingCode').textContent = s.pairingCode || '—';
+  const badge = $('terminalStateBadge');
+  badge.textContent = s.enabled ? 'On' : 'Off';
+  badge.classList.toggle('on', !!s.enabled);
+  // If the native PTY couldn't load on this build, say so and block the toggle.
+  const warn = $('terminalUnavail');
+  if (!s.available) {
+    warn.textContent = 'Terminal can\'t run on this build: ' + (s.reason || 'native module unavailable') + '. Enabling it will have no effect until that\'s fixed.';
+    warn.classList.remove('hidden');
+  } else {
+    warn.classList.add('hidden');
+  }
+}
+$('terminalEnableToggle').addEventListener('change', async (e) => {
+  await window.api.setTerminalEnabled(e.target.checked);
+  await loadTerminalSelf();
+  toast(e.target.checked ? 'Remote Terminal enabled on this machine' : 'Remote Terminal disabled');
+});
+
+// ---- Opening / driving a session ----
+function termTheme() {
+  // Match the dark-glass brand (blue→purple accent).
+  return {
+    background: '#0b0c10', foreground: '#e6e7ee', cursor: '#9b6dff',
+    cursorAccent: '#0b0c10', selectionBackground: 'rgba(109,139,255,0.35)',
+    black: '#2a2c36', red: '#ff6d8b', green: '#7be0a3', yellow: '#ffd479',
+    blue: '#6d8bff', magenta: '#9b6dff', cyan: '#6ddfff', white: '#e6e7ee',
+    brightBlack: '#5a5d6b', brightRed: '#ff8da3', brightGreen: '#9bf0bd',
+    brightYellow: '#ffe0a0', brightBlue: '#9bb0ff', brightMagenta: '#bb9bff',
+    brightCyan: '#a0ecff', brightWhite: '#ffffff',
+  };
+}
+
+function setTermState(text, cls) {
+  const el = $('terminalConnState');
+  el.textContent = text;
+  el.className = 'term-state' + (cls ? ' ' + cls : '');
+}
+
+$('terminalBtn').onclick = () => openTerminal();
+
+function openTerminal() {
+  // Pick a peer that exposes a shell; prefer one we're already paired with.
+  const candidates = peerTerminalState.filter((p) => p.enabled);
+  if (!candidates.length) {
+    toast('No machine is exposing a terminal. Turn on Remote Terminal in its Settings.');
+    return;
+  }
+  const peer = candidates.find((p) => p.paired) || candidates[0];
+  if (!peer.paired) {
+    toast(`Pair with ${peer.name} first (the ⚡ Remote actions panel) — the terminal uses the same code.`);
+    return;
+  }
+  if (termCtx) return; // already open
+  $('terminalPeerName').textContent = peer.name || 'peer';
+  $('terminalModal').classList.remove('hidden');
+  startTermSession(peer);
+}
+
+function startTermSession(peer) {
+  const term = new Terminal({
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+    fontSize: 13, cursorBlink: true, scrollback: 5000,
+    theme: termTheme(), allowProposedApi: true,
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open($('terminalHost'));
+  fit.fit();
+
+  termCtx = { peerId: peer.peerId, reqId: null, sid: null, term, fit, ro: null, opened: false };
+  setTermState('connecting…', '');
+
+  const { cols, rows } = term;
+  window.api.termOpen(peer.peerId, cols, rows).then((reqId) => {
+    if (termCtx) termCtx.reqId = reqId;
+    if (!reqId) endTermSession('— could not reach peer —');
+  });
+
+  // Keep the PTY's window size in sync with the panel.
+  termCtx.ro = new ResizeObserver(() => {
+    if (!termCtx) return;
+    try { termCtx.fit.fit(); } catch (_) {}
+    if (termCtx.sid) window.api.termResize(termCtx.peerId, termCtx.sid, term.cols, term.rows);
+  });
+  termCtx.ro.observe($('terminalHost'));
+}
+
+// Executor acked our open request — wire keystrokes once we have a session id.
+function onTermOpened(t) {
+  if (!termCtx || t.reqId !== termCtx.reqId) return;
+  if (!t.ok || !t.sid) {
+    endTermSession('— ' + (t.error || 'could not open shell') + ' —');
+    return;
+  }
+  termCtx.sid = t.sid;
+  termCtx.opened = true;
+  setTermState('connected', 'on');
+  termCtx.term.onData((d) => {
+    if (termCtx && termCtx.sid) window.api.termInput(termCtx.peerId, termCtx.sid, d);
+  });
+  termCtx.term.focus();
+}
+
+function onTermData(t) {
+  if (!termCtx || t.sid !== termCtx.sid) return;
+  termCtx.term.write(t.data);
+}
+
+function onTermExit(t) {
+  if (!termCtx || t.sid !== termCtx.sid) return;
+  endTermSession(`— shell exited${t.code != null ? ' (code ' + t.code + ')' : ''} —`);
+}
+
+// Tear down the session. `notice` (optional) is printed into the terminal so
+// the user sees why it ended; the panel stays open until they hit Done.
+function endTermSession(notice) {
+  if (!termCtx) return;
+  const ctx = termCtx;
+  if (notice) { try { ctx.term.write('\r\n\x1b[2m' + notice + '\x1b[0m\r\n'); } catch (_) {} }
+  setTermState('closed', 'off');
+  // Tell the executor to kill the PTY (no-op if it already exited).
+  if (ctx.sid) window.api.termClose(ctx.peerId, ctx.sid);
+  ctx.opened = false;
+  ctx.sid = null;
+}
+
+function closeTerminalPanel() {
+  if (termCtx) {
+    const ctx = termCtx;
+    if (ctx.sid) window.api.termClose(ctx.peerId, ctx.sid);
+    try { ctx.ro && ctx.ro.disconnect(); } catch (_) {}
+    try { ctx.term.dispose(); } catch (_) {}
+    termCtx = null;
+  }
+  $('terminalModal').classList.add('hidden');
+}
+$('terminalClose').onclick = closeTerminalPanel;
+
 // ---------- Help & diagnostics ----------
 let lastDiag = null;
 
@@ -786,6 +957,10 @@ window.api.onHistory((h) => { history = h; render(); });
 window.api.onStatus(applyStatus);
 window.api.onPeerActions(applyPeerActions);
 window.api.onRunResult(showActionResult);
+window.api.onPeerTerminal(applyPeerTerminal);
+window.api.onTermOpened(onTermOpened);
+window.api.onTermData(onTermData);
+window.api.onTermExit(onTermExit);
 window.api.onIncoming((note) => {
   const from = (note.origin && note.origin.name) || 'your other machine';
   toast(`New from ${from}`);
@@ -807,5 +982,7 @@ window.api.onIncoming((note) => {
   editor.focus();
   peerActionsState = (await window.api.actionsPeers()) || [];
   updateActionsDot();
+  peerTerminalState = (await window.api.terminalPeers()) || [];
+  updateTerminalDot();
   updateInfo = (await window.api.updateInfo()) || updateInfo;
 })();
