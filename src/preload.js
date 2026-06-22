@@ -29,6 +29,15 @@ contextBridge.exposeInMainWorld('api', {
   pairPeer: (peerId, code) => ipcRenderer.invoke('pair-peer', peerId, code),
   runRemote: (peerId, actionId) => ipcRenderer.invoke('run-remote', peerId, actionId),
 
+  // Remote Terminal
+  terminalSelf: () => ipcRenderer.invoke('terminal-self'),
+  terminalPeers: () => ipcRenderer.invoke('terminal-peers'),
+  setTerminalEnabled: (on) => ipcRenderer.invoke('set-terminal-enabled', on),
+  termOpen: (peerId, cols, rows) => ipcRenderer.invoke('term-open', peerId, cols, rows),
+  termInput: (peerId, sid, data) => ipcRenderer.invoke('term-input', peerId, sid, data),
+  termResize: (peerId, sid, cols, rows) => ipcRenderer.invoke('term-resize', peerId, sid, cols, rows),
+  termClose: (peerId, sid) => ipcRenderer.invoke('term-close', peerId, sid),
+
   // Diagnostics / help
   runDiagnostics: () => ipcRenderer.invoke('run-diagnostics'),
   appVersion: () => ipcRenderer.invoke('app-version'),
@@ -49,4 +58,10 @@ contextBridge.exposeInMainWorld('api', {
   onLog: (cb) => ipcRenderer.on('log', (_e, m) => cb(m)),
   onPeerActions: (cb) => ipcRenderer.on('peer-actions', (_e, pa) => cb(pa)),
   onRunResult: (cb) => ipcRenderer.on('run-result', (_e, r) => cb(r)),
+
+  // Remote Terminal stream events (main -> renderer)
+  onPeerTerminal: (cb) => ipcRenderer.on('peer-terminal', (_e, pt) => cb(pt)),
+  onTermOpened: (cb) => ipcRenderer.on('term-opened', (_e, t) => cb(t)),
+  onTermData: (cb) => ipcRenderer.on('term-data', (_e, t) => cb(t)),
+  onTermExit: (cb) => ipcRenderer.on('term-exit', (_e, t) => cb(t)),
 });

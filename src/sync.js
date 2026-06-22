@@ -41,7 +41,9 @@ class Sync extends EventEmitter {
     this.dialing = new Set(); // peerId or addr keys currently being dialed
     this.history = [];
     this.peerActions = new Map(); // peerId -> { enabled, list }
+    this.peerTerminal = new Map(); // peerId -> enabled (does the peer expose a shell?)
     this.actionsProvider = null; // set by main: { publicState, run, pairingToken, peerToken }
+    this.terminalProvider = null; // set by main: { enabled, pairingToken, open, write, resize, close, has, closePeer }
 
     this.wss = null;
     this.disco = null;
@@ -59,6 +61,11 @@ class Sync extends EventEmitter {
   // Provider bridges to the local Actions registry without coupling Sync to it.
   setActionsProvider(p) {
     this.actionsProvider = p;
+  }
+
+  // Provider bridges to the local PTY manager (Remote Terminal) the same way.
+  setTerminalProvider(p) {
+    this.terminalProvider = p;
   }
 
   start() {
@@ -256,6 +263,8 @@ class Sync extends EventEmitter {
         catch (e) { this.emit('log', 'history send error: ' + (e && e.message)); }
         try { this._sendActions(ws); }
         catch (e) { this.emit('log', 'actions send error: ' + (e && e.message)); }
+        try { this._sendTermState(ws); }
+        catch (e) { this.emit('log', 'term-state send error: ' + (e && e.message)); }
         return;
       }
 
@@ -312,6 +321,63 @@ class Sync extends EventEmitter {
         });
         return;
       }
+
+      // ---- Remote Terminal (PTY stream; pairing-code gated like Trusted Actions) ----
+
+      // Peer told us whether it exposes a shell (drives the terminal button).
+      if (msg.kind === 'term-state') {
+        this.peerTerminal.set(peerId, !!msg.enabled);
+        const name = (this.peers.get(peerId) || {}).name;
+        this.emit('peer-terminal', { peerId, name, enabled: !!msg.enabled });
+        return;
+      }
+
+      // A peer asked us to open a shell. Validate + spawn on THIS machine.
+      if (msg.kind === 'term-open') {
+        this._handleTermOpen(ws, peerId, msg);
+        return;
+      }
+
+      // Executor's ack for our open request — surface it to the renderer.
+      if (msg.kind === 'term-opened') {
+        this.emit('term-opened', {
+          peerId, reqId: msg.reqId, sid: msg.sid, ok: !!msg.ok, error: msg.error,
+        });
+        return;
+      }
+
+      // term-data is bidirectional on one kind. If WE own the session id it's
+      // keystrokes for our local PTY (executor role); otherwise it's shell
+      // output bound for our renderer (client role). sids are UUIDs, so the
+      // ownership test is unambiguous even if both ends run terminals.
+      if (msg.kind === 'term-data' && msg.sid) {
+        if (this.terminalProvider && this.terminalProvider.has(msg.sid)) {
+          this.terminalProvider.write(msg.sid, msg.data);
+        } else {
+          this.emit('term-data', { peerId, sid: msg.sid, data: msg.data });
+        }
+        return;
+      }
+
+      if (msg.kind === 'term-resize' && msg.sid) {
+        if (this.terminalProvider) this.terminalProvider.resize(msg.sid, msg.cols, msg.rows);
+        return;
+      }
+
+      // Client closed the pane → kill our PTY. (Executor→client teardown uses
+      // term-exit, below.)
+      if (msg.kind === 'term-close' && msg.sid) {
+        if (this.terminalProvider && this.terminalProvider.has(msg.sid)) {
+          this.terminalProvider.close(msg.sid);
+        }
+        return;
+      }
+
+      // Shell exited on the executor — tell the renderer to close the tab.
+      if (msg.kind === 'term-exit' && msg.sid) {
+        this.emit('term-exit', { peerId, sid: msg.sid, code: msg.code });
+        return;
+      }
     });
 
     const cleanup = () => {
@@ -321,7 +387,11 @@ class Sync extends EventEmitter {
         this.peers.delete(peerId);
         this.peerHosts.delete(peerId);
         this.peerActions.delete(peerId);
+        this.peerTerminal.delete(peerId);
+        // Never leave an orphan shell running for a link that's gone.
+        if (this.terminalProvider) { try { this.terminalProvider.closePeer(peerId); } catch (_) {} }
         this.emit('peer-actions', { peerId, enabled: false, list: [] });
+        this.emit('peer-terminal', { peerId, enabled: false });
         this.emit('status', this.statusSnapshot());
         this.emit('log', `✕ disconnected from ${name || String(peerId).slice(0, 8)}`);
       }
@@ -337,6 +407,7 @@ class Sync extends EventEmitter {
     this.peers.clear();
     this.peerHosts.clear();
     this.peerActions.clear();
+    this.peerTerminal.clear();
     this.dialing.clear();
     this.emit('status', this.statusSnapshot());
     this._beacon();
@@ -354,6 +425,19 @@ class Sync extends EventEmitter {
   // Re-advertise our action list to all peers (after a toggle/edit/reload).
   broadcastActions() {
     for (const { ws } of this.peers.values()) this._sendActions(ws);
+  }
+
+  // Tell a peer whether we expose a shell (enabled AND the native PTY loaded).
+  _sendTermState(ws) {
+    if (!this.terminalProvider) return;
+    let on = false;
+    try { on = !!this.terminalProvider.enabled(); } catch (_) {}
+    this._send(ws, { kind: 'term-state', enabled: on });
+  }
+
+  // Re-advertise our terminal availability to all peers (after a toggle).
+  broadcastTerminalState() {
+    for (const { ws } of this.peers.values()) this._sendTermState(ws);
   }
 
   // A peer asked us to run an action. Validate the pairing token + allow-list,
@@ -383,6 +467,61 @@ class Sync extends EventEmitter {
     const token = this.actionsProvider ? this.actionsProvider.peerToken(peerId) : '';
     this._send(peer.ws, { kind: 'run', reqId, id: actionId, token: token || '' });
     return reqId;
+  }
+
+  // ---- Remote Terminal plumbing (executor + client) ----
+
+  // A peer asked us to open a shell. Validate the pairing token + that the
+  // feature is enabled HERE, spawn a local PTY, and stream it back over this
+  // socket. Modeled on _handleRun — only an open request crossed the wire.
+  _handleTermOpen(ws, peerId, msg) {
+    const reply = (r) => this._send(ws, {
+      kind: 'term-opened', reqId: msg.reqId,
+      sid: r.ok ? r.sid : null, ok: !!r.ok, error: r.error,
+    });
+    const provider = this.terminalProvider;
+    if (!provider) return reply({ ok: false, error: 'terminal not available on target' });
+    if (!provider.enabled()) return reply({ ok: false, error: 'remote terminal is disabled on this machine' });
+
+    const expected = provider.pairingToken();
+    if (!expected || msg.token !== expected) {
+      return reply({ ok: false, error: 'not paired — invalid or missing pairing code' });
+    }
+
+    const result = provider.open({
+      peerId,
+      cols: msg.cols, rows: msg.rows,
+      onData: (sid, data) => this._send(ws, { kind: 'term-data', sid, data }),
+      onExit: (sid, code) => this._send(ws, { kind: 'term-exit', sid, code }),
+    });
+    reply(result);
+  }
+
+  // Client side: ask a peer to open a shell. Signs with the peer's pairing
+  // code (same token store as Trusted Actions). Returns a reqId, or null.
+  // The 'term-opened' event carries the session id assigned by the executor.
+  sendTermOpen(peerId, cols, rows) {
+    const peer = this.peers.get(peerId);
+    if (!peer) return null;
+    const reqId = crypto.randomUUID();
+    const token = this.actionsProvider ? this.actionsProvider.peerToken(peerId) : '';
+    this._send(peer.ws, { kind: 'term-open', reqId, cols, rows, token: token || '' });
+    return reqId;
+  }
+
+  sendTermData(peerId, sid, data) {
+    const peer = this.peers.get(peerId);
+    if (peer) this._send(peer.ws, { kind: 'term-data', sid, data });
+  }
+
+  sendTermResize(peerId, sid, cols, rows) {
+    const peer = this.peers.get(peerId);
+    if (peer) this._send(peer.ws, { kind: 'term-resize', sid, cols, rows });
+  }
+
+  sendTermClose(peerId, sid) {
+    const peer = this.peers.get(peerId);
+    if (peer) this._send(peer.ws, { kind: 'term-close', sid });
   }
 
   // Merge a note into history (dedupe by id). Returns true if new.
@@ -458,6 +597,16 @@ class Sync extends EventEmitter {
     for (const [peerId, pa] of this.peerActions) {
       const name = (this.peers.get(peerId) || {}).name;
       out.push({ peerId, name, enabled: pa.enabled, list: pa.list });
+    }
+    return out;
+  }
+
+  // Which connected peers currently expose a shell (for renderer init).
+  peerTerminalSnapshot() {
+    const out = [];
+    for (const [peerId, enabled] of this.peerTerminal) {
+      const name = (this.peers.get(peerId) || {}).name;
+      out.push({ peerId, name, enabled });
     }
     return out;
   }

@@ -7,6 +7,7 @@ const os = require('os');
 const net = require('net');
 const { Sync, newId } = require('./sync');
 const { Actions } = require('./actions');
+const { TerminalManager } = require('./terminal');
 const { startCliServer } = require('./cliserver');
 const { setupUpdater } = require('./updater');
 
@@ -16,6 +17,7 @@ let win = null;
 let sync = null;
 let tray = null;
 let actions = null;
+let terminal = null;
 let cliServer = null;
 let updater = null;
 
@@ -72,6 +74,9 @@ function getConfig() {
   if (!cfg.pairingToken) { cfg.pairingToken = makePairingCode(); changed = true; }
   if (!cfg.peerTokens || typeof cfg.peerTokens !== 'object') { cfg.peerTokens = {}; changed = true; }
   if (!cfg.cliToken) { cfg.cliToken = require('crypto').randomBytes(16).toString('hex'); changed = true; }
+  // Remote Terminal: a SEPARATE opt-in from Trusted Actions, OFF by default.
+  // When on, paired peers can open a real shell on this machine.
+  if (typeof cfg.terminalEnabled !== 'boolean') { cfg.terminalEnabled = false; changed = true; }
   if (changed) saveJSON(configFile, cfg);
   return cfg;
 }
@@ -329,6 +334,22 @@ function startSync() {
     peerToken: (peerId) => (getConfig().peerTokens || {})[peerId] || '', // sign outbound
   });
 
+  // Remote Terminal: load the PTY manager and bridge it to Sync. enabled() is
+  // true ONLY when the user opted in AND the native module actually loaded, so
+  // peers never see a shell we can't honor. Pairing uses the same code as
+  // Trusted Actions (validated in sync._handleTermOpen).
+  terminal = new TerminalManager();
+  sync.setTerminalProvider({
+    enabled: () => getConfig().terminalEnabled && terminal.available(),
+    pairingToken: () => getConfig().pairingToken,
+    open: (opts) => terminal.open(opts),
+    write: (sid, data) => terminal.write(sid, data),
+    resize: (sid, cols, rows) => terminal.resize(sid, cols, rows),
+    close: (sid) => terminal.close(sid),
+    has: (sid) => terminal.has(sid),
+    closePeer: (peerId) => terminal.closePeer(peerId),
+  });
+
   // Catch up any received files already in history (e.g. received by an older
   // version, or before this machine had the feature) so they get a local copy.
   if (processReceivedFiles(history, cfg.id)) saveJSON(historyFile, history);
@@ -342,6 +363,11 @@ function startSync() {
   sync.on('incoming', (note) => send('incoming', note));
   sync.on('peer-actions', (pa) => send('peer-actions', pa));
   sync.on('run-result', (r) => send('run-result', r));
+  // Remote Terminal stream events → renderer.
+  sync.on('peer-terminal', (pt) => send('peer-terminal', pt));
+  sync.on('term-opened', (t) => send('term-opened', t));
+  sync.on('term-data', (t) => send('term-data', t));
+  sync.on('term-exit', (t) => send('term-exit', t));
   sync.on('log', pushLog);
 
   pushLog(`starting — ${cfg.name} (${String(cfg.id).slice(0, 8)}) on ports ws ${50778}/disc ${50777}; manual peers: ${cfg.manualPeers.join(', ') || 'none'}`);
@@ -514,6 +540,53 @@ ipcMain.handle('run-remote', (_e, peerId, actionId) => {
   return sync.sendRun(peerId, actionId);
 });
 
+// ---- Remote Terminal IPC ----
+
+// This machine's terminal switch + whether the native PTY is usable here.
+ipcMain.handle('terminal-self', () => {
+  const cfg = getConfig();
+  return {
+    enabled: !!cfg.terminalEnabled,
+    available: terminal ? terminal.available() : false,
+    reason: terminal ? terminal.unavailableReason() : 'not initialized',
+    pairingCode: cfg.pairingToken,
+  };
+});
+
+// Toggle exposing a shell on THIS machine, then re-advertise to peers.
+ipcMain.handle('set-terminal-enabled', (_e, on) => {
+  const cfg = getConfig();
+  cfg.terminalEnabled = !!on;
+  saveJSON(configFile, cfg);
+  if (sync) sync.broadcastTerminalState();
+  return cfg.terminalEnabled;
+});
+
+// Connected peers that currently expose a shell + whether we've paired with them.
+ipcMain.handle('terminal-peers', () => {
+  const cfg = getConfig();
+  const list = sync ? sync.peerTerminalSnapshot() : [];
+  return list.map((p) => ({ ...p, paired: !!(cfg.peerTokens || {})[p.peerId] }));
+});
+
+// Open a shell on a peer. Returns a reqId; the session id arrives via term-opened.
+ipcMain.handle('term-open', (_e, peerId, cols, rows) => {
+  if (!sync) return null;
+  return sync.sendTermOpen(peerId, cols, rows);
+});
+
+ipcMain.handle('term-input', (_e, peerId, sid, data) => {
+  if (sync) sync.sendTermData(peerId, sid, data);
+});
+
+ipcMain.handle('term-resize', (_e, peerId, sid, cols, rows) => {
+  if (sync) sync.sendTermResize(peerId, sid, cols, rows);
+});
+
+ipcMain.handle('term-close', (_e, peerId, sid) => {
+  if (sync) sync.sendTermClose(peerId, sid);
+});
+
 // ---- Diagnostics / Help ----
 
 function probeTcp(host, port, timeout = 3000) {
@@ -649,6 +722,7 @@ app.on('window-all-closed', () => {});
 
 app.on('before-quit', () => {
   app.isQuitting = true;
+  if (terminal) { try { terminal.closeAll(); } catch (_) {} }
   if (sync) sync.stop();
   if (cliServer) { try { cliServer.close(); } catch (_) {} }
 });
