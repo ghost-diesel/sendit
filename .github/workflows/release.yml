@@ -27,9 +27,22 @@ jobs:
       - name: Build Linux AppImage (x64)
         # --publish never: electron-builder otherwise auto-publishes on a tag and
         # demands a token; we let the Release step below handle uploads instead.
+        # electron-builder rebuilds node-pty (a native module, no Linux prebuild —
+        # so it compiles from source here) for Electron's ABI and unpacks it from
+        # the asar automatically; the next step asserts that actually happened.
         run: npx electron-builder --linux AppImage --x64 --publish never
         env:
           CSC_IDENTITY_AUTODISCOVERY: "false"
+
+      # Fail loudly if the Remote Terminal's native module didn't make it into the
+      # package — a green build that silently dropped node-pty would ship a broken
+      # terminal. Checks the unpacked .node + the executable spawn-helper.
+      - name: Verify node-pty bundled
+        run: |
+          U="dist/linux-unpacked/resources/app.asar.unpacked/node_modules/node-pty/build/Release"
+          test -f "$U/pty.node" || { echo "::error::node-pty pty.node missing from package"; exit 1; }
+          test -x "$U/spawn-helper" || { echo "::error::node-pty spawn-helper missing or not executable"; exit 1; }
+          echo "✓ node-pty bundled and unpacked: $(ls -1 "$U")"
 
       # Always keep the build downloadable from the run (handy for manual runs).
       - name: Upload build artifact

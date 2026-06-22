@@ -21,6 +21,16 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
+# The Remote Terminal uses node-pty, a native module with no prebuilt Linux
+# binary — it compiles from source, which needs a C/C++ toolchain + python3.
+if ! command -v cc >/dev/null 2>&1 || ! command -v make >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+  echo "Build tools are needed to compile the terminal module. Install them first:"
+  echo "  Debian/Ubuntu:  sudo apt install build-essential python3"
+  echo "  Fedora:         sudo dnf groupinstall 'Development Tools' && sudo dnf install python3"
+  echo "  Arch:           sudo pacman -S base-devel python"
+  exit 1
+fi
+
 echo "→ Installing dependencies (one time)..."
 npm install --cache "$PWD/.npm-cache"
 
