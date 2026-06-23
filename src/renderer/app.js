@@ -373,6 +373,12 @@ $('settingsBtn').onclick = async () => {
   $('updateStatus').classList.add('hidden');
   loadActionsSelf();
   loadTerminalSelf();
+  // Dock toggle is macOS-only; reflect the saved preference.
+  if (navigator.platform.startsWith('Mac')) {
+    $('dockRow').style.display = '';
+    $('dockHint').style.display = '';
+    $('dockToggle').checked = !!self.showDock;
+  }
   selectTab('device');
   $('settingsModal').classList.remove('hidden');
   $('nameInput').focus();
@@ -411,6 +417,11 @@ async function loadActionsSelf() {
   badge.textContent = s.enabled ? 'On' : 'Off';
   badge.classList.toggle('on', !!s.enabled);
 }
+$('dockToggle').addEventListener('change', async (e) => {
+  self.showDock = await window.api.setDockVisible(e.target.checked);
+  toast(self.showDock ? 'Dock icon on' : 'Dock icon off — menu bar only');
+});
+
 $('actionsEnableToggle').addEventListener('change', async (e) => {
   await window.api.setActionsEnabled(e.target.checked);
   await loadActionsSelf();
@@ -689,7 +700,12 @@ function setTermState(text, cls) {
 
 $('terminalBtn').onclick = () => openTerminal();
 
-function openTerminal() {
+async function openTerminal() {
+  // Re-read live state from main: the `paired` flag (from the shared pairing
+  // store) can go stale on peerTerminalState if you paired AFTER the peer last
+  // advertised its terminal. main is the source of truth.
+  peerTerminalState = (await window.api.terminalPeers()) || peerTerminalState;
+  updateTerminalDot();
   // Pick a peer that exposes a shell; prefer one we're already paired with.
   const candidates = peerTerminalState.filter((p) => p.enabled);
   if (!candidates.length) {

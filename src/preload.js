@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('api', {
   clearAll: () => ipcRenderer.invoke('clear-all'),
   setName: (name) => ipcRenderer.invoke('set-name', name),
   setManualPeers: (list) => ipcRenderer.invoke('set-manual-peers', list),
+  setDockVisible: (show) => ipcRenderer.invoke('set-dock-visible', show),
   copyText: (text) => ipcRenderer.invoke('copy-text', text),
   copyImage: (dataUrl) => ipcRenderer.invoke('copy-image', dataUrl),
   readClipboard: () => ipcRenderer.invoke('read-clipboard'),

@@ -124,6 +124,18 @@
               <input type="text" id="nameInput" placeholder="e.g. Mac Mini" />
             </label>
             <p class="modal-hint">Shown on your other machine so you know where a note came from.</p>
+
+            <div class="ta-bar" id="dockRow" style="display:none">
+              <div class="ta-bar-text">
+                <span class="ta-bar-title">Show in Dock</span>
+              </div>
+              <label class="switch" title="Also show a Dock icon (macOS)">
+                <input type="checkbox" id="dockToggle" />
+                <span class="switch-track"><span class="switch-knob"></span></span>
+              </label>
+            </div>
+            <p class="modal-hint" id="dockHint" style="display:none">macOS only. The menu-bar icon stays either
+              way — this just adds a Dock icon so you can ⌘-Tab to Send It.</p>
           </section>
 
           <!-- Connection -->

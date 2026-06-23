@@ -79,6 +79,9 @@ function getConfig() {
   // Remote Terminal: a SEPARATE opt-in from Trusted Actions, OFF by default.
   // When on, paired peers can open a real shell on this machine.
   if (typeof cfg.terminalEnabled !== 'boolean') { cfg.terminalEnabled = false; changed = true; }
+  // macOS: show a Dock icon too, or stay menu-bar-only (default). Off keeps the
+  // current pure-tray behavior.
+  if (typeof cfg.showDock !== 'boolean') { cfg.showDock = false; changed = true; }
   if (changed) saveJSON(configFile, cfg);
   return cfg;
 }
@@ -282,6 +285,13 @@ function updateTrayMenu() {
   tray.setContextMenu(menu);
 }
 
+// macOS Dock icon visibility. Hiding it keeps Send It a pure menu-bar app;
+// showing it adds a Dock icon (and ⌘-Tab entry). No-op off macOS.
+function applyDockVisibility(show) {
+  if (process.platform !== 'darwin' || !app.dock) return;
+  if (show) app.dock.show(); else app.dock.hide();
+}
+
 // ---- Launch at login ----
 
 function setLoginItem(enabled) {
@@ -427,6 +437,15 @@ ipcMain.handle('set-name', (_e, name) => {
   saveJSON(configFile, cfg);
   if (sync) sync.name = cfg.name;
   return cfg.name;
+});
+
+// Toggle the macOS Dock icon (Settings → Device).
+ipcMain.handle('set-dock-visible', (_e, show) => {
+  const cfg = getConfig();
+  cfg.showDock = !!show;
+  saveJSON(configFile, cfg);
+  applyDockVisibility(cfg.showDock);
+  return cfg.showDock;
 });
 
 ipcMain.handle('copy-text', (_e, text) => {
@@ -700,8 +719,8 @@ ipcMain.handle('open-file', async (_e, p) => {
 });
 
 app.whenReady().then(() => {
-  // Pure menu-bar app on macOS — no dock icon.
-  if (process.platform === 'darwin' && app.dock) app.dock.hide();
+  // macOS: menu-bar app, with an optional Dock icon (user preference).
+  applyDockVisibility(getConfig().showDock);
 
   startSync();
   createTray();
