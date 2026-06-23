@@ -359,7 +359,11 @@ function startSync() {
     resize: (sid, cols, rows) => terminal.resize(sid, cols, rows),
     close: (sid) => terminal.close(sid),
     has: (sid) => terminal.has(sid),
-    closePeer: (peerId) => terminal.closePeer(peerId),
+    owns: (peerId, sid) => terminal.owns(peerId, sid),
+    list: (peerId) => terminal.list(peerId),
+    attach: (sid, opts) => terminal.attach(sid, opts),
+    detach: (sid) => terminal.detach(sid),
+    detachPeer: (peerId) => terminal.detachPeer(peerId),
   });
 
   // Catch up any received files already in history (e.g. received by an older
@@ -378,6 +382,8 @@ function startSync() {
   // Remote Terminal stream events → renderer.
   sync.on('peer-terminal', (pt) => send('peer-terminal', pt));
   sync.on('term-opened', (t) => send('term-opened', t));
+  sync.on('term-sessions', (t) => send('term-sessions', t));
+  sync.on('term-attached', (t) => send('term-attached', t));
   sync.on('term-data', (t) => send('term-data', t));
   sync.on('term-exit', (t) => send('term-exit', t));
   sync.on('log', pushLog);
@@ -604,8 +610,26 @@ ipcMain.handle('term-resize', (_e, peerId, sid, cols, rows) => {
   if (sync) sync.sendTermResize(peerId, sid, cols, rows);
 });
 
+// Explicit kill (per-tab ✕).
 ipcMain.handle('term-close', (_e, peerId, sid) => {
   if (sync) sync.sendTermClose(peerId, sid);
+});
+
+// List a peer's still-alive sessions; reqId; result via term-sessions.
+ipcMain.handle('term-list', (_e, peerId) => {
+  if (!sync) return null;
+  return sync.sendTermList(peerId);
+});
+
+// Reattach to a live session; reqId; result via term-attached + a term-data burst.
+ipcMain.handle('term-attach', (_e, peerId, sid, cols, rows) => {
+  if (!sync) return null;
+  return sync.sendTermAttach(peerId, sid, cols, rows);
+});
+
+// Detach (leave the shell running on the peer).
+ipcMain.handle('term-detach', (_e, peerId, sid) => {
+  if (sync) sync.sendTermDetach(peerId, sid);
 });
 
 // ---- Diagnostics / Help ----

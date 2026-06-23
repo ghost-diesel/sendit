@@ -1,7 +1,8 @@
 // End-to-end test of the Remote Terminal network slice between two Sync
-// instances: terminal-state advertisement, pairing-token gating, opening a
-// real PTY on the "executor", streaming a command's output back, and a
-// wrong-code rejection. Mirrors test-actions-net.js.
+// instances: terminal-state advertisement, pairing-token gating, opening a real
+// PTY on the "executor", streaming output back, a wrong-code rejection, and the
+// PERSISTENCE path — detach (keep alive) → list → reattach → buffer replay →
+// explicit kill. Mirrors test-actions-net.js.
 const { Sync } = require('./src/sync');
 const { TerminalManager } = require('./src/terminal');
 
@@ -20,10 +21,14 @@ exec.setTerminalProvider({
   resize: (sid, cols, rows) => term.resize(sid, cols, rows),
   close: (sid) => term.close(sid),
   has: (sid) => term.has(sid),
-  closePeer: (peerId) => term.closePeer(peerId),
+  owns: (peerId, sid) => term.owns(peerId, sid),
+  list: (peerId) => term.list(peerId),
+  attach: (sid, opts) => term.attach(sid, opts),
+  detach: (sid) => term.detach(sid),
+  detachPeer: (peerId) => term.detachPeer(peerId),
 });
 
-// Controller signs term-open with the peer's code (peerToken), like the GUI.
+// Controller signs requests with the peer's code (peerToken), like the GUI.
 let ctrlToken = PAIR;
 ctrl.setActionsProvider({
   publicState: () => ({ enabled: false, list: [] }),
@@ -51,50 +56,57 @@ ctrl.on('peer-terminal', (pt) => {
 });
 
 const opened = [];
-const dataChunks = [];
 const exits = [];
+let allData = '';      // everything streamed back
+let replay = '';       // data captured after we reattach (the buffer burst)
+let capturingReplay = false;
+let sessionList = null;
+let attached = null;
+let aliveWhileDetached = null;
+
 ctrl.on('term-opened', (t) => opened.push(t));
-ctrl.on('term-data', (t) => { if (t.data) dataChunks.push(t.data); });
+ctrl.on('term-data', (t) => { if (t.data) { allData += t.data; if (capturingReplay) replay += t.data; } });
 ctrl.on('term-exit', (t) => exits.push(t));
+ctrl.on('term-sessions', (t) => { sessionList = t.sessions || []; });
+ctrl.on('term-attached', (t) => { attached = t; });
 
 exec.start();
 ctrl.start();
 
-let goodSid = null;
+let sid = null;
 
-// Step 1: paired open should succeed and give us a session id.
-setTimeout(() => { if (execPeerId) ctrl.sendTermOpen(execPeerId, 80, 24); }, 2500);
+const steps = [
+  // 1. Paired open succeeds.
+  [2500, () => ctrl.sendTermOpen(execPeerId, 80, 24)],
+  // 2. Run a command whose output we'll later expect to see REPLAYED.
+  [3500, () => { const o = opened.find((x) => x.ok); if (o) { sid = o.sid; ctrl.sendTermData(execPeerId, sid, 'echo PERSIST-MARKER\r'); } }],
+  // 3. Wrong code is rejected.
+  [4500, () => { ctrlToken = 'WRONG'; ctrl.sendTermOpen(execPeerId, 80, 24); ctrlToken = PAIR; }],
+  // 4. Detach — the shell must KEEP RUNNING (not be killed).
+  [5200, () => { ctrl.sendTermDetach(execPeerId, sid); }],
+  // 5. List sessions — the detached one should still be there (and alive).
+  [5900, () => { aliveWhileDetached = term.sessions.size; ctrl.sendTermList(execPeerId); }],
+  // 6. Reattach — expect the buffered screen (with our marker) to replay.
+  [6600, () => { capturingReplay = true; ctrl.sendTermAttach(execPeerId, sid, 100, 30); }],
+  // 7. Explicit kill.
+  [8000, () => ctrl.sendTermClose(execPeerId, sid)],
+];
+for (const [t, fn] of steps) setTimeout(() => { if (execPeerId) fn(); }, t);
 
-// Step 2: once open, type a command into the PTY.
 setTimeout(() => {
-  const ok = opened.find((o) => o.ok);
-  if (ok) { goodSid = ok.sid; ctrl.sendTermData(execPeerId, goodSid, 'echo terminal-works\r'); }
-}, 3500);
+  check('paired term-open returned a session id', opened.some((o) => o.ok && o.sid));
+  check('command output streamed back from the real PTY', /PERSIST-MARKER/.test(allData));
+  check('wrong pairing code rejected', opened.some((o) => o.ok === false && /not paired/.test(o.error || '')));
+  check('detached shell stays alive on executor', aliveWhileDetached === 1);
+  check('list returns the detached session', !!sessionList && sessionList.some((s) => s.sid === sid));
+  check('reattach acknowledged', !!attached && attached.ok === true);
+  check('reattach replays the buffered screen', /PERSIST-MARKER/.test(replay));
+  check('explicit kill removes the session', term.sessions.size === 0);
 
-// Step 3: wrong pairing code must be rejected (no session).
-setTimeout(() => { ctrlToken = 'WRONG'; if (execPeerId) ctrl.sendTermOpen(execPeerId, 80, 24); }, 4500);
-
-setTimeout(() => {
-  const okOpen = opened.find((o) => o.ok && o.sid);
-  check('paired term-open returned a session id', !!okOpen);
-
-  const output = dataChunks.join('');
-  check('command output streamed back from the real PTY', /terminal-works/.test(output));
-
-  const denied = opened.find((o) => o.ok === false && /not paired/.test(o.error || ''));
-  check('wrong pairing code rejected', !!denied);
-
-  // Closing the session should terminate the shell on the executor.
-  if (goodSid) ctrl.sendTermClose(execPeerId, goodSid);
-
-  setTimeout(() => {
-    check('no orphan sessions left on executor after close', term.sessions.size === 0);
-
-    console.log('\n=== Remote Terminal network ===');
-    let all = true;
-    for (const [n, p] of checks) { console.log(`${p ? '✅' : '❌'} ${n}`); if (!p) all = false; }
-    term.closeAll(); exec.stop(); ctrl.stop();
-    console.log(all ? '\n✅ PASS — advertise, token gating, PTY stream, teardown all work' : '\n❌ FAIL');
-    process.exit(all ? 0 : 1);
-  }, 700);
-}, 6000);
+  console.log('\n=== Remote Terminal network ===');
+  let all = true;
+  for (const [n, p] of checks) { console.log(`${p ? '✅' : '❌'} ${n}`); if (!p) all = false; }
+  term.closeAll(); exec.stop(); ctrl.stop();
+  console.log(all ? '\n✅ PASS — advertise, gating, stream, persistence (detach/list/reattach/replay), kill' : '\n❌ FAIL');
+  process.exit(all ? 0 : 1);
+}, 9000);

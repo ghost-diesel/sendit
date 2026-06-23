@@ -35,6 +35,9 @@ contextBridge.exposeInMainWorld('api', {
   terminalPeers: () => ipcRenderer.invoke('terminal-peers'),
   setTerminalEnabled: (on) => ipcRenderer.invoke('set-terminal-enabled', on),
   termOpen: (peerId, cols, rows) => ipcRenderer.invoke('term-open', peerId, cols, rows),
+  termList: (peerId) => ipcRenderer.invoke('term-list', peerId),
+  termAttach: (peerId, sid, cols, rows) => ipcRenderer.invoke('term-attach', peerId, sid, cols, rows),
+  termDetach: (peerId, sid) => ipcRenderer.invoke('term-detach', peerId, sid),
   termInput: (peerId, sid, data) => ipcRenderer.invoke('term-input', peerId, sid, data),
   termResize: (peerId, sid, cols, rows) => ipcRenderer.invoke('term-resize', peerId, sid, cols, rows),
   termClose: (peerId, sid) => ipcRenderer.invoke('term-close', peerId, sid),
@@ -63,6 +66,8 @@ contextBridge.exposeInMainWorld('api', {
   // Remote Terminal stream events (main -> renderer)
   onPeerTerminal: (cb) => ipcRenderer.on('peer-terminal', (_e, pt) => cb(pt)),
   onTermOpened: (cb) => ipcRenderer.on('term-opened', (_e, t) => cb(t)),
+  onTermSessions: (cb) => ipcRenderer.on('term-sessions', (_e, t) => cb(t)),
+  onTermAttached: (cb) => ipcRenderer.on('term-attached', (_e, t) => cb(t)),
   onTermData: (cb) => ipcRenderer.on('term-data', (_e, t) => cb(t)),
   onTermExit: (cb) => ipcRenderer.on('term-exit', (_e, t) => cb(t)),
 });

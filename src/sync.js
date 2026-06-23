@@ -341,8 +341,36 @@ class Sync extends EventEmitter {
       // Executor's ack for our open request — surface it to the renderer.
       if (msg.kind === 'term-opened') {
         this.emit('term-opened', {
-          peerId, reqId: msg.reqId, sid: msg.sid, ok: !!msg.ok, error: msg.error,
+          peerId, reqId: msg.reqId, sid: msg.sid, seq: msg.seq, ok: !!msg.ok, error: msg.error,
         });
+        return;
+      }
+
+      // List the sessions still alive on THIS machine (for reattach on reopen).
+      if (msg.kind === 'term-list') {
+        this._handleTermList(ws, peerId, msg);
+        return;
+      }
+      if (msg.kind === 'term-sessions') {
+        this.emit('term-sessions', { peerId, reqId: msg.reqId, sessions: msg.sessions || [], error: msg.error });
+        return;
+      }
+
+      // Reattach to a persistent session running on THIS machine.
+      if (msg.kind === 'term-attach') {
+        this._handleTermAttach(ws, peerId, msg);
+        return;
+      }
+      if (msg.kind === 'term-attached') {
+        this.emit('term-attached', { peerId, reqId: msg.reqId, sid: msg.sid, seq: msg.seq, ok: !!msg.ok, error: msg.error });
+        return;
+      }
+
+      // Detach: client closed the panel but wants the shell to KEEP RUNNING.
+      if (msg.kind === 'term-detach' && msg.sid) {
+        if (this.terminalProvider && this.terminalProvider.owns(peerId, msg.sid)) {
+          this.terminalProvider.detach(msg.sid);
+        }
         return;
       }
 
@@ -352,7 +380,7 @@ class Sync extends EventEmitter {
       // ownership test is unambiguous even if both ends run terminals.
       if (msg.kind === 'term-data' && msg.sid) {
         if (this.terminalProvider && this.terminalProvider.has(msg.sid)) {
-          this.terminalProvider.write(msg.sid, msg.data);
+          if (this.terminalProvider.owns(peerId, msg.sid)) this.terminalProvider.write(msg.sid, msg.data);
         } else {
           this.emit('term-data', { peerId, sid: msg.sid, data: msg.data });
         }
@@ -360,14 +388,16 @@ class Sync extends EventEmitter {
       }
 
       if (msg.kind === 'term-resize' && msg.sid) {
-        if (this.terminalProvider) this.terminalProvider.resize(msg.sid, msg.cols, msg.rows);
+        if (this.terminalProvider && this.terminalProvider.owns(peerId, msg.sid)) {
+          this.terminalProvider.resize(msg.sid, msg.cols, msg.rows);
+        }
         return;
       }
 
-      // Client closed the pane → kill our PTY. (Executor→client teardown uses
-      // term-exit, below.)
+      // Client explicitly KILLED a session (per-tab ✕). (Executor→client
+      // teardown on shell exit uses term-exit, below.)
       if (msg.kind === 'term-close' && msg.sid) {
-        if (this.terminalProvider && this.terminalProvider.has(msg.sid)) {
+        if (this.terminalProvider && this.terminalProvider.owns(peerId, msg.sid)) {
           this.terminalProvider.close(msg.sid);
         }
         return;
@@ -388,8 +418,9 @@ class Sync extends EventEmitter {
         this.peerHosts.delete(peerId);
         this.peerActions.delete(peerId);
         this.peerTerminal.delete(peerId);
-        // Never leave an orphan shell running for a link that's gone.
-        if (this.terminalProvider) { try { this.terminalProvider.closePeer(peerId); } catch (_) {} }
+        // DETACH (don't kill) this peer's shells so long-running work survives
+        // a dropped link / closed panel; they reattach on reconnect.
+        if (this.terminalProvider) { try { this.terminalProvider.detachPeer(peerId); } catch (_) {} }
         this.emit('peer-actions', { peerId, enabled: false, list: [] });
         this.emit('peer-terminal', { peerId, enabled: false });
         this.emit('status', this.statusSnapshot());
@@ -477,7 +508,7 @@ class Sync extends EventEmitter {
   _handleTermOpen(ws, peerId, msg) {
     const reply = (r) => this._send(ws, {
       kind: 'term-opened', reqId: msg.reqId,
-      sid: r.ok ? r.sid : null, ok: !!r.ok, error: r.error,
+      sid: r.ok ? r.sid : null, seq: r.seq, ok: !!r.ok, error: r.error,
     });
     const provider = this.terminalProvider;
     if (!provider) return reply({ ok: false, error: 'terminal not available on target' });
@@ -497,6 +528,40 @@ class Sync extends EventEmitter {
     reply(result);
   }
 
+  // A paired peer asked which of its sessions are still alive here.
+  _handleTermList(ws, peerId, msg) {
+    const reply = (sessions, error) => this._send(ws, {
+      kind: 'term-sessions', reqId: msg.reqId, sessions: sessions || [], error,
+    });
+    const provider = this.terminalProvider;
+    if (!provider || !provider.enabled()) return reply([]);
+    const expected = provider.pairingToken();
+    if (!expected || msg.token !== expected) return reply([], 'not paired');
+    reply(provider.list(peerId));
+  }
+
+  // A paired peer wants to reattach to one of its live sessions. Rebind output
+  // to this socket and replay the recent-output buffer so it can repaint.
+  _handleTermAttach(ws, peerId, msg) {
+    const reply = (r) => this._send(ws, {
+      kind: 'term-attached', reqId: msg.reqId, sid: msg.sid, seq: r.seq, ok: !!r.ok, error: r.error,
+    });
+    const provider = this.terminalProvider;
+    if (!provider) return reply({ ok: false, error: 'terminal not available on target' });
+    if (!provider.enabled()) return reply({ ok: false, error: 'remote terminal is disabled on this machine' });
+    const expected = provider.pairingToken();
+    if (!expected || msg.token !== expected) return reply({ ok: false, error: 'not paired' });
+
+    const res = provider.attach(msg.sid, {
+      peerId, cols: msg.cols, rows: msg.rows,
+      onData: (sid, data) => this._send(ws, { kind: 'term-data', sid, data }),
+      onExit: (sid, code) => this._send(ws, { kind: 'term-exit', sid, code }),
+    });
+    reply(res);
+    // Repaint: stream the buffered screen as a normal term-data burst.
+    if (res.ok && res.buffer) this._send(ws, { kind: 'term-data', sid: msg.sid, data: res.buffer });
+  }
+
   // Client side: ask a peer to open a shell. Signs with the peer's pairing
   // code (same token store as Trusted Actions). Returns a reqId, or null.
   // The 'term-opened' event carries the session id assigned by the executor.
@@ -504,9 +569,36 @@ class Sync extends EventEmitter {
     const peer = this.peers.get(peerId);
     if (!peer) return null;
     const reqId = crypto.randomUUID();
-    const token = this.actionsProvider ? this.actionsProvider.peerToken(peerId) : '';
-    this._send(peer.ws, { kind: 'term-open', reqId, cols, rows, token: token || '' });
+    this._send(peer.ws, { kind: 'term-open', reqId, cols, rows, token: this._peerToken(peerId) });
     return reqId;
+  }
+
+  // Ask a peer which sessions of ours are still alive (for reattach on reopen).
+  sendTermList(peerId) {
+    const peer = this.peers.get(peerId);
+    if (!peer) return null;
+    const reqId = crypto.randomUUID();
+    this._send(peer.ws, { kind: 'term-list', reqId, token: this._peerToken(peerId) });
+    return reqId;
+  }
+
+  // Reattach to a live session on a peer. Result arrives via 'term-attached'.
+  sendTermAttach(peerId, sid, cols, rows) {
+    const peer = this.peers.get(peerId);
+    if (!peer) return null;
+    const reqId = crypto.randomUUID();
+    this._send(peer.ws, { kind: 'term-attach', reqId, sid, cols, rows, token: this._peerToken(peerId) });
+    return reqId;
+  }
+
+  // Detach (keep the shell running on the peer).
+  sendTermDetach(peerId, sid) {
+    const peer = this.peers.get(peerId);
+    if (peer) this._send(peer.ws, { kind: 'term-detach', sid });
+  }
+
+  _peerToken(peerId) {
+    return (this.actionsProvider ? this.actionsProvider.peerToken(peerId) : '') || '';
   }
 
   sendTermData(peerId, sid, data) {

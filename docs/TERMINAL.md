@@ -60,10 +60,26 @@ Mac (client / controller)             CloudCore (executor)
 | `term-state`  | executor→client  | `{ enabled }`                    | Advertises whether a shell is exposed (drives the toolbar button). Sent at handshake + on toggle. |
 | `term-open`   | client→executor  | `{ reqId, cols, rows, token }`   | Gated: enabled + valid pairing code. |
 | `term-opened` | executor→client  | `{ reqId, sid, ok, error }`      | Ack; `sid` is the executor-assigned session id. |
-| `term-data`   | both             | `{ sid, data }`                  | Disambiguated by session-id ownership: if the receiver owns `sid` it's keystrokes for its PTY (executor); otherwise it's output for its renderer (client). |
+| `term-data`   | both             | `{ sid, data }`                  | Disambiguated by session-id ownership: if the receiver owns `sid` it's keystrokes for its PTY (executor); otherwise it's output for its renderer (client). Also carries the replay buffer on attach. |
 | `term-resize` | client→executor  | `{ sid, cols, rows }`            | |
-| `term-close`  | client→executor  | `{ sid }`                        | User closed the pane → kill the PTY. |
+| `term-list`   | client→executor  | `{ reqId, token }`               | Which of my sessions are still alive here? Reply `term-sessions { sessions:[{sid,seq,cols,rows}] }`. |
+| `term-attach` | client→executor  | `{ reqId, sid, cols, rows, token }` | Reattach to a live session. Reply `term-attached { sid, seq, ok }`, then a `term-data` burst of the replay buffer. |
+| `term-detach` | client→executor  | `{ sid }`                        | Close the panel but KEEP the shell running. |
+| `term-close`  | client→executor  | `{ sid }`                        | Explicit ✕ → kill the PTY. |
 | `term-exit`   | executor→client  | `{ sid, code }`                  | Shell exited → close the tab. |
+
+## Persistence (detachable, tmux-style sessions)
+
+Shells survive the client. The executor keeps a PTY running — and keeps buffering
+its output — when the client closes the panel (`term-detach`) **or** the link
+drops (a disconnect detaches that peer's sessions rather than killing them). On
+reopen the client calls `term-list`, restores a tab per live session via
+`term-attach`, and the executor replays a recent-output ring buffer
+(`BUFFER_LIMIT`, 256 KB) so the screen repaints. A shell dies only on an explicit
+`term-close` (the per-tab ✕), when its own process exits, on app shutdown, or via
+the idle reaper (detached + no output for `IDLE_REAP_MS`, 4 h). This is what makes
+"start `pacman -Syu`, close the lid, reattach later" safe. Up to 8 live sessions
+per peer.
 
 ## node-pty (native module) — build notes
 

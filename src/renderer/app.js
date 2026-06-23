@@ -633,10 +633,12 @@ function applyPeerActions(pa) {
 let peerTerminalState = []; // [{ peerId, name, enabled, paired }]
 // Tabbed sessions. The executor already supports many PTYs per peer (sid-keyed),
 // so tabs are purely a renderer concern: each tab owns its own xterm + sid.
-let termTabs = []; // [{ id, peerId, reqId, sid, term, fit, ro, host, tabEl, title, state, opened }]
+let termTabs = []; // [{ id, peerId, reqId, sid, seq, term, fit, ro, host, tabEl, state, opened }]
 let activeTabId = null;
 let termPeer = null; // the peer this panel's tabs target
-let termTabSeq = 0;  // monotonic counter for stable tab titles
+let termTabSeq = 0;  // monotonic counter for unique tab element ids
+let termListReq = null; // reqId of the in-flight session list (restore-on-open)
+let termListTimer = null;
 
 function updateTerminalDot() {
   const any = peerTerminalState.some((p) => p.enabled);
@@ -730,13 +732,32 @@ async function openTerminal() {
   termPeer = peer;
   $('terminalPeerName').textContent = peer.name || 'peer';
   $('terminalModal').classList.remove('hidden');
-  if (!termTabs.length) newTab(); // first open → one shell
-  else setActiveTab(activeTabId); // re-show; re-fit the visible tab
+  if (termTabs.length) { setActiveTab(activeTabId); return; } // already open
+  // Restore any shells still running on the peer (persistent sessions); if none
+  // come back (or the peer doesn't answer), open a fresh one.
+  setTermState('restoring…', '');
+  const reqId = await window.api.termList(peer.peerId);
+  termListReq = reqId;
+  clearTimeout(termListTimer);
+  termListTimer = setTimeout(() => {
+    if (termListReq === reqId && !termTabs.length) { termListReq = null; newTab(); }
+  }, 4000);
 }
 
-// Open a fresh tab (new PTY on the peer). The executor caps sessions per peer.
-function newTab() {
-  if (!termPeer) return;
+// Restore tabs from the peer's live session list (or start fresh if empty).
+function onTermSessions(t) {
+  if (t.reqId !== termListReq) return;
+  termListReq = null;
+  clearTimeout(termListTimer);
+  if ($('terminalModal').classList.contains('hidden') || termTabs.length) return;
+  const sessions = (t.sessions || []).slice().sort((a, b) => a.seq - b.seq);
+  if (!sessions.length) { newTab(); return; }
+  for (const s of sessions) attachTab(s);
+}
+
+// Build a tab's xterm + host + observer. `sid` is preset for a reattach, null
+// for a brand-new shell. Returns the tab (already active).
+function buildTab(sid) {
   const id = 'tab-' + (++termTabSeq);
   const host = document.createElement('div');
   host.className = 'term-host';
@@ -762,18 +783,12 @@ function newTab() {
     return true;
   });
 
-  const tab = { id, peerId: termPeer.peerId, reqId: null, sid: null, term, fit, ro: null,
-    host, tabEl: null, title: 'shell ' + termTabSeq, state: 'connecting', opened: false };
+  const tab = { id, peerId: termPeer.peerId, reqId: null, sid: sid || null, term, fit, ro: null,
+    host, tabEl: null, state: 'connecting', opened: false };
   termTabs.push(tab);
 
   term.open(host);
   setActiveTab(id); // shows the host + fits against real dimensions
-
-  window.api.termOpen(tab.peerId, term.cols, term.rows).then((reqId) => {
-    if (!tabById(id)) return;
-    tab.reqId = reqId;
-    if (!reqId) endTabSession(tab, '— could not reach peer —');
-  });
 
   tab.ro = new ResizeObserver(() => {
     if (!tabById(id) || host.style.display === 'none') return; // ignore hidden tabs (0×0)
@@ -781,6 +796,30 @@ function newTab() {
     if (tab.sid) window.api.termResize(tab.peerId, tab.sid, term.cols, term.rows);
   });
   tab.ro.observe(host);
+  return tab;
+}
+
+// Open a fresh tab (new PTY on the peer). The executor caps sessions per peer.
+function newTab() {
+  if (!termPeer) return;
+  const tab = buildTab(null);
+  window.api.termOpen(tab.peerId, tab.term.cols, tab.term.rows).then((reqId) => {
+    if (!tabById(tab.id)) return;
+    tab.reqId = reqId;
+    if (!reqId) endTabSession(tab, '— could not reach peer —');
+  });
+}
+
+// Reattach to a session still running on the peer (restore on reopen). Its
+// buffered screen arrives as a term-data burst and repaints the xterm.
+function attachTab(session) {
+  if (!termPeer) return;
+  const tab = buildTab(session.sid);
+  window.api.termAttach(tab.peerId, session.sid, tab.term.cols, tab.term.rows).then((reqId) => {
+    if (!tabById(tab.id)) return;
+    tab.reqId = reqId;
+    if (!reqId) endTabSession(tab, '— could not reach peer —');
+  });
 }
 
 function setActiveTab(id) {
@@ -826,17 +865,31 @@ function renderTabStrip() {
   strip.appendChild(add);
 }
 
-// Executor acked an open request — wire keystrokes once we have a session id.
+// Mark a tab live + wire keystrokes (shared by open and reattach).
+function tabConnected(tab, seq) {
+  tab.opened = true;
+  tab.state = 'connected';
+  if (seq != null) tab.seq = seq;
+  tab.term.onData((d) => { if (tab.sid) window.api.termInput(tab.peerId, tab.sid, d); });
+  if (tab.id === activeTabId) { setTermState('connected', 'on'); tab.term.focus(); }
+  renderTabStrip();
+}
+
+// Executor acked a NEW shell — record its session id and wire keystrokes.
 function onTermOpened(t) {
   const tab = termTabs.find((x) => x.reqId === t.reqId);
   if (!tab) return;
   if (!t.ok || !t.sid) { endTabSession(tab, '— ' + (t.error || 'could not open shell') + ' —'); return; }
   tab.sid = t.sid;
-  tab.opened = true;
-  tab.state = 'connected';
-  tab.term.onData((d) => { if (tab.sid) window.api.termInput(tab.peerId, tab.sid, d); });
-  if (tab.id === activeTabId) { setTermState('connected', 'on'); tab.term.focus(); }
-  renderTabStrip();
+  tabConnected(tab, t.seq);
+}
+
+// Executor acked a REATTACH — the session's buffered screen follows as term-data.
+function onTermAttached(t) {
+  const tab = termTabs.find((x) => x.reqId === t.reqId);
+  if (!tab) return;
+  if (!t.ok) { endTabSession(tab, '— ' + (t.error || 'could not reattach') + ' —'); return; }
+  tabConnected(tab, t.seq);
 }
 
 function onTermData(t) {
@@ -849,11 +902,12 @@ function onTermExit(t) {
   if (tab) endTabSession(tab, `— shell exited${t.code != null ? ' (code ' + t.code + ')' : ''} —`);
 }
 
-// Mark a tab's shell as ended: print a notice, kill the PTY, dim the chip. The
-// tab stays so its output is readable until the user closes it.
+// Mark a tab's shell as ended (exited, errored, or peer gone): print a notice,
+// dim the chip. We do NOT kill anything here — an exited shell is already gone,
+// and a dropped link leaves the shell running on the peer (it'll come back on
+// reattach). The only way to actually kill a shell is the per-tab ✕.
 function endTabSession(tab, notice) {
   if (notice) { try { tab.term.write('\r\n\x1b[2m' + notice + '\x1b[0m\r\n'); } catch (_) {} }
-  if (tab.sid) window.api.termClose(tab.peerId, tab.sid);
   tab.opened = false;
   tab.sid = null;
   tab.state = 'closed';
@@ -861,12 +915,12 @@ function endTabSession(tab, notice) {
   renderTabStrip();
 }
 
-// Fully remove a tab (kill PTY, dispose xterm). Closing the last one closes
-// the panel.
+// Per-tab ✕ — explicitly KILL this shell on the peer and drop the tab. Closing
+// the last one closes the panel.
 function closeTab(id) {
   const tab = tabById(id);
   if (!tab) return;
-  if (tab.sid) window.api.termClose(tab.peerId, tab.sid);
+  if (tab.sid) window.api.termClose(tab.peerId, tab.sid); // kill on the executor
   try { tab.ro && tab.ro.disconnect(); } catch (_) {}
   try { tab.term.dispose(); } catch (_) {}
   try { tab.host.remove(); } catch (_) {}
@@ -876,9 +930,13 @@ function closeTab(id) {
   else renderTabStrip();
 }
 
+// Done — DETACH every tab so its shell keeps running on the peer; we just tear
+// down the local xterm. Reopening reattaches via the session list.
 function closeTerminalPanel() {
+  clearTimeout(termListTimer);
+  termListReq = null;
   for (const tab of termTabs) {
-    if (tab.sid) window.api.termClose(tab.peerId, tab.sid);
+    if (tab.sid) window.api.termDetach(tab.peerId, tab.sid); // keep it running
     try { tab.ro && tab.ro.disconnect(); } catch (_) {}
     try { tab.term.dispose(); } catch (_) {}
     try { tab.host.remove(); } catch (_) {}
@@ -1062,6 +1120,8 @@ window.api.onPeerActions(applyPeerActions);
 window.api.onRunResult(showActionResult);
 window.api.onPeerTerminal(applyPeerTerminal);
 window.api.onTermOpened(onTermOpened);
+window.api.onTermSessions(onTermSessions);
+window.api.onTermAttached(onTermAttached);
 window.api.onTermData(onTermData);
 window.api.onTermExit(onTermExit);
 window.api.onIncoming((note) => {
