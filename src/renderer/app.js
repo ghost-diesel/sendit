@@ -631,8 +631,12 @@ function applyPeerActions(pa) {
 // ---------- Remote Terminal ----------
 // peerTerminalState: which connected peers expose a shell (+ paired flag).
 let peerTerminalState = []; // [{ peerId, name, enabled, paired }]
-// termCtx: the single live terminal session (null when the panel is closed).
-let termCtx = null; // { peerId, reqId, sid, term, fit, ro, opened }
+// Tabbed sessions. The executor already supports many PTYs per peer (sid-keyed),
+// so tabs are purely a renderer concern: each tab owns its own xterm + sid.
+let termTabs = []; // [{ id, peerId, reqId, sid, term, fit, ro, host, tabEl, title, state, opened }]
+let activeTabId = null;
+let termPeer = null; // the peer this panel's tabs target
+let termTabSeq = 0;  // monotonic counter for stable tab titles
 
 function updateTerminalDot() {
   const any = peerTerminalState.some((p) => p.enabled);
@@ -643,8 +647,11 @@ function applyPeerTerminal(pt) {
   const i = peerTerminalState.findIndex((p) => p.peerId === pt.peerId);
   if (!pt.enabled) {
     if (i >= 0) peerTerminalState.splice(i, 1);
-    // If the machine we're actively shelled into just went away, say so.
-    if (termCtx && termCtx.peerId === pt.peerId && termCtx.opened) endTermSession('— peer disconnected —');
+    // If the machine we're actively shelled into just went away, say so in
+    // every open tab pointed at it.
+    for (const tab of termTabs) {
+      if (tab.peerId === pt.peerId && tab.opened) endTabSession(tab, '— peer disconnected —');
+    }
   } else {
     const existing = i >= 0 ? peerTerminalState[i] : {};
     // The paired flag comes from the actions snapshot (shared pairing store).
@@ -692,11 +699,14 @@ function termTheme() {
   };
 }
 
+// Reflect the active tab's connection state in the header badge.
 function setTermState(text, cls) {
   const el = $('terminalConnState');
   el.textContent = text;
   el.className = 'term-state' + (cls ? ' ' + cls : '');
 }
+
+const tabById = (id) => termTabs.find((t) => t.id === id);
 
 $('terminalBtn').onclick = () => openTerminal();
 
@@ -717,13 +727,21 @@ async function openTerminal() {
     toast(`Pair with ${peer.name} first (the ⚡ Remote actions panel) — the terminal uses the same code.`);
     return;
   }
-  if (termCtx) return; // already open
+  termPeer = peer;
   $('terminalPeerName').textContent = peer.name || 'peer';
   $('terminalModal').classList.remove('hidden');
-  startTermSession(peer);
+  if (!termTabs.length) newTab(); // first open → one shell
+  else setActiveTab(activeTabId); // re-show; re-fit the visible tab
 }
 
-function startTermSession(peer) {
+// Open a fresh tab (new PTY on the peer). The executor caps sessions per peer.
+function newTab() {
+  if (!termPeer) return;
+  const id = 'tab-' + (++termTabSeq);
+  const host = document.createElement('div');
+  host.className = 'term-host';
+  $('terminalHosts').appendChild(host);
+
   const term = new Terminal({
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
     fontSize: 13, cursorBlink: true, scrollback: 5000,
@@ -731,74 +749,143 @@ function startTermSession(peer) {
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
-  term.open($('terminalHost'));
-  fit.fit();
-
-  termCtx = { peerId: peer.peerId, reqId: null, sid: null, term, fit, ro: null, opened: false };
-  setTermState('connecting…', '');
-
-  const { cols, rows } = term;
-  window.api.termOpen(peer.peerId, cols, rows).then((reqId) => {
-    if (termCtx) termCtx.reqId = reqId;
-    if (!reqId) endTermSession('— could not reach peer —');
+  // ⌘T opens another tab; ⌘1–9 jumps to one. Cmd only (never steal the shell's
+  // Ctrl shortcuts), and we leave ⌘W to the OS so it doesn't fight window-close.
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type !== 'keydown' || !e.metaKey) return true;
+    if (e.key === 't') { newTab(); return false; }
+    if (e.key >= '1' && e.key <= '9') {
+      const t = termTabs[Number(e.key) - 1];
+      if (t) setActiveTab(t.id);
+      return false;
+    }
+    return true;
   });
 
-  // Keep the PTY's window size in sync with the panel.
-  termCtx.ro = new ResizeObserver(() => {
-    if (!termCtx) return;
-    try { termCtx.fit.fit(); } catch (_) {}
-    if (termCtx.sid) window.api.termResize(termCtx.peerId, termCtx.sid, term.cols, term.rows);
+  const tab = { id, peerId: termPeer.peerId, reqId: null, sid: null, term, fit, ro: null,
+    host, tabEl: null, title: 'shell ' + termTabSeq, state: 'connecting', opened: false };
+  termTabs.push(tab);
+
+  term.open(host);
+  setActiveTab(id); // shows the host + fits against real dimensions
+
+  window.api.termOpen(tab.peerId, term.cols, term.rows).then((reqId) => {
+    if (!tabById(id)) return;
+    tab.reqId = reqId;
+    if (!reqId) endTabSession(tab, '— could not reach peer —');
   });
-  termCtx.ro.observe($('terminalHost'));
+
+  tab.ro = new ResizeObserver(() => {
+    if (!tabById(id) || host.style.display === 'none') return; // ignore hidden tabs (0×0)
+    try { fit.fit(); } catch (_) {}
+    if (tab.sid) window.api.termResize(tab.peerId, tab.sid, term.cols, term.rows);
+  });
+  tab.ro.observe(host);
 }
 
-// Executor acked our open request — wire keystrokes once we have a session id.
-function onTermOpened(t) {
-  if (!termCtx || t.reqId !== termCtx.reqId) return;
-  if (!t.ok || !t.sid) {
-    endTermSession('— ' + (t.error || 'could not open shell') + ' —');
-    return;
+function setActiveTab(id) {
+  const tab = tabById(id);
+  if (!tab) return;
+  activeTabId = id;
+  for (const t of termTabs) t.host.style.display = t.id === id ? '' : 'none';
+  renderTabStrip();
+  // xterm can only size against a visible element — fit on activation.
+  try { tab.fit.fit(); } catch (_) {}
+  if (tab.opened && tab.sid) window.api.termResize(tab.peerId, tab.sid, tab.term.cols, tab.term.rows);
+  setTermState(tab.state === 'connected' ? 'connected' : tab.state === 'closed' ? 'closed' : 'connecting…',
+    tab.state === 'connected' ? 'on' : tab.state === 'closed' ? 'off' : '');
+  tab.term.focus();
+}
+
+// Rebuild the tab strip (chips + the “new tab” button).
+function renderTabStrip() {
+  const strip = $('terminalTabs');
+  strip.innerHTML = '';
+  for (const tab of termTabs) {
+    const el = document.createElement('div');
+    el.className = 'term-tab' + (tab.id === activeTabId ? ' active' : '') + (tab.state === 'closed' ? ' exited' : '');
+    el.onclick = (e) => { if (e.target.closest('.tab-x')) return; setActiveTab(tab.id); };
+    const label = document.createElement('span');
+    label.className = 'tab-label';
+    label.textContent = tab.title;
+    const x = document.createElement('button');
+    x.className = 'tab-x';
+    x.title = 'Close tab';
+    x.textContent = '✕';
+    x.onclick = () => closeTab(tab.id);
+    el.appendChild(label);
+    el.appendChild(x);
+    tab.tabEl = el;
+    strip.appendChild(el);
   }
-  termCtx.sid = t.sid;
-  termCtx.opened = true;
-  setTermState('connected', 'on');
-  termCtx.term.onData((d) => {
-    if (termCtx && termCtx.sid) window.api.termInput(termCtx.peerId, termCtx.sid, d);
-  });
-  termCtx.term.focus();
+  const add = document.createElement('button');
+  add.className = 'term-tab-add';
+  add.title = 'New tab (⌘T)';
+  add.textContent = '+';
+  add.onclick = () => newTab();
+  strip.appendChild(add);
+}
+
+// Executor acked an open request — wire keystrokes once we have a session id.
+function onTermOpened(t) {
+  const tab = termTabs.find((x) => x.reqId === t.reqId);
+  if (!tab) return;
+  if (!t.ok || !t.sid) { endTabSession(tab, '— ' + (t.error || 'could not open shell') + ' —'); return; }
+  tab.sid = t.sid;
+  tab.opened = true;
+  tab.state = 'connected';
+  tab.term.onData((d) => { if (tab.sid) window.api.termInput(tab.peerId, tab.sid, d); });
+  if (tab.id === activeTabId) { setTermState('connected', 'on'); tab.term.focus(); }
+  renderTabStrip();
 }
 
 function onTermData(t) {
-  if (!termCtx || t.sid !== termCtx.sid) return;
-  termCtx.term.write(t.data);
+  const tab = termTabs.find((x) => x.sid === t.sid);
+  if (tab) tab.term.write(t.data);
 }
 
 function onTermExit(t) {
-  if (!termCtx || t.sid !== termCtx.sid) return;
-  endTermSession(`— shell exited${t.code != null ? ' (code ' + t.code + ')' : ''} —`);
+  const tab = termTabs.find((x) => x.sid === t.sid);
+  if (tab) endTabSession(tab, `— shell exited${t.code != null ? ' (code ' + t.code + ')' : ''} —`);
 }
 
-// Tear down the session. `notice` (optional) is printed into the terminal so
-// the user sees why it ended; the panel stays open until they hit Done.
-function endTermSession(notice) {
-  if (!termCtx) return;
-  const ctx = termCtx;
-  if (notice) { try { ctx.term.write('\r\n\x1b[2m' + notice + '\x1b[0m\r\n'); } catch (_) {} }
-  setTermState('closed', 'off');
-  // Tell the executor to kill the PTY (no-op if it already exited).
-  if (ctx.sid) window.api.termClose(ctx.peerId, ctx.sid);
-  ctx.opened = false;
-  ctx.sid = null;
+// Mark a tab's shell as ended: print a notice, kill the PTY, dim the chip. The
+// tab stays so its output is readable until the user closes it.
+function endTabSession(tab, notice) {
+  if (notice) { try { tab.term.write('\r\n\x1b[2m' + notice + '\x1b[0m\r\n'); } catch (_) {} }
+  if (tab.sid) window.api.termClose(tab.peerId, tab.sid);
+  tab.opened = false;
+  tab.sid = null;
+  tab.state = 'closed';
+  if (tab.id === activeTabId) setTermState('closed', 'off');
+  renderTabStrip();
+}
+
+// Fully remove a tab (kill PTY, dispose xterm). Closing the last one closes
+// the panel.
+function closeTab(id) {
+  const tab = tabById(id);
+  if (!tab) return;
+  if (tab.sid) window.api.termClose(tab.peerId, tab.sid);
+  try { tab.ro && tab.ro.disconnect(); } catch (_) {}
+  try { tab.term.dispose(); } catch (_) {}
+  try { tab.host.remove(); } catch (_) {}
+  termTabs = termTabs.filter((t) => t.id !== id);
+  if (!termTabs.length) { closeTerminalPanel(); return; }
+  if (activeTabId === id) setActiveTab(termTabs[termTabs.length - 1].id);
+  else renderTabStrip();
 }
 
 function closeTerminalPanel() {
-  if (termCtx) {
-    const ctx = termCtx;
-    if (ctx.sid) window.api.termClose(ctx.peerId, ctx.sid);
-    try { ctx.ro && ctx.ro.disconnect(); } catch (_) {}
-    try { ctx.term.dispose(); } catch (_) {}
-    termCtx = null;
+  for (const tab of termTabs) {
+    if (tab.sid) window.api.termClose(tab.peerId, tab.sid);
+    try { tab.ro && tab.ro.disconnect(); } catch (_) {}
+    try { tab.term.dispose(); } catch (_) {}
+    try { tab.host.remove(); } catch (_) {}
   }
+  termTabs = [];
+  activeTabId = null;
+  $('terminalTabs').innerHTML = '';
   $('terminalModal').classList.add('hidden');
 }
 $('terminalClose').onclick = closeTerminalPanel;

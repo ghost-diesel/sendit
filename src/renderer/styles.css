@@ -824,8 +824,34 @@ body {
 .term-state.on { color: var(--good); background: var(--good-dim); border-color: rgba(74,216,145,0.35); }
 .term-state.off { color: var(--text-faint); background: var(--panel); }
 
+/* Tab strip */
+.term-tabs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.term-tab {
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 8px 5px 11px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--panel);
+  color: var(--text-dim); font-size: 12px; cursor: pointer; user-select: none;
+}
+.term-tab:hover { border-color: var(--border-strong); background: var(--panel-strong); }
+.term-tab.active { color: var(--text); border-color: var(--accent); background: var(--panel-strong); }
+.term-tab.exited .tab-label { opacity: 0.5; text-decoration: line-through; }
+.term-tab .tab-x {
+  display: grid; place-items: center; width: 15px; height: 15px;
+  border: none; border-radius: 4px; background: transparent;
+  color: var(--text-faint); font-size: 10px; line-height: 1; cursor: pointer;
+}
+.term-tab .tab-x:hover { background: var(--danger-dim); color: var(--danger); }
+.term-tab-add {
+  width: 26px; height: 26px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--panel);
+  color: var(--text-dim); font-size: 16px; line-height: 1; cursor: pointer;
+}
+.term-tab-add:hover { color: var(--text); border-color: var(--accent); background: var(--panel-strong); }
+
+/* Host area — one .term-host per tab; only the active one is shown. */
+.term-hosts { flex: 1; min-height: 0; position: relative; }
 .term-host {
-  flex: 1; min-height: 0;
+  height: 100%;
   background: var(--bg);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
